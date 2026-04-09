@@ -1,0 +1,27 @@
+# secrets + local state
+.env
+data/
+*.db
+*.db-journal
+
+# python
+__pycache__/
+*.pyc
+.venv/
+venv/
+.eggs/
+*.egg-info/
+
+# node / frontend
+frontend/node_modules/
+frontend/dist/
+frontend/.vite/
+*.log
+npm-debug.log*
+
+# editors
+.vscode/
+.idea/
+
+# macOS
+.DS_Store
