@@ -63,7 +63,13 @@ class Settings(BaseSettings):
 @lru_cache(maxsize=1)
 def get_settings() -> Settings:
     DATA_DIR.mkdir(parents=True, exist_ok=True)
-    return Settings()
+    s = Settings()
+    # In Docker the DATABASE_URL points at /data/app.db (persistent volume).
+    # Make sure the parent directory exists there too.
+    db_path = s.DATABASE_URL.replace("sqlite:///", "")
+    if db_path.startswith("/"):
+        Path(db_path).parent.mkdir(parents=True, exist_ok=True)
+    return s
 
 
 settings = get_settings()
