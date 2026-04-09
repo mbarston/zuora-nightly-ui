@@ -42,7 +42,7 @@ from app.db import SessionLocal
 from app.models import BackfillJob, Run, Tenant
 
 
-logger = logging.getLogger("zuora-nightly.backfill")
+logger = logging.getLogger("zuora-se-agent.backfill")
 
 
 # ------------------------------------------------------------------

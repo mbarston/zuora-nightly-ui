@@ -24,7 +24,7 @@ class Settings(BaseSettings):
     )
 
     # --- app ---
-    APP_NAME: str = "Zuora Nightly"
+    APP_NAME: str = "Zuora SE Demo Data Agent"
     APP_HOST: str = "127.0.0.1"
     APP_PORT: int = 8000
     # In dev this can be "http://localhost:8000"; in prod, the real URL.

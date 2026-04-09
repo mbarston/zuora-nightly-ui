@@ -1,8 +1,8 @@
-# zuora-nightly-ui
+# Zuora SE Demo Data Agent
 
-Internal web app for running the Zuora `zuora-demo-data-nightly` skill per
-user, per tenant. Self-hosted, Google SSO-gated, with encrypted credential
-storage and both on-demand + scheduled runs.
+Internal web app for generating realistic demo data in Zuora sandboxes.
+Self-hosted, Google SSO-gated, with encrypted credential storage,
+on-demand + scheduled runs, historical backfill, and interactive Claude chat.
 
 ## Phase status
 
@@ -30,7 +30,7 @@ storage and both on-demand + scheduled runs.
 
 ### 2. Configure
 ```bash
-cd ~/Documents/Code/zuora-nightly-ui
+cd ~/Documents/Code/zuora-se-demo-data-agent
 cp .env.example .env
 ```
 
@@ -56,7 +56,7 @@ auto-reload. Open http://localhost:8000.
 
 1. Go to https://console.cloud.google.com/apis/credentials → **Create
    Credentials** → **OAuth client ID** → **Web application**
-2. Name: "zuora-nightly-ui (local)"
+2. Name: "zuora-se-demo-data-agent (local)"
 3. Authorized redirect URI: `http://localhost:8000/auth/callback`
 4. Click Create, copy the **Client ID** and **Client secret**
 5. Paste both into `.env`:
@@ -74,7 +74,7 @@ domain gets a 403 and no user row is created.
 ## Project layout
 
 ```
-zuora-nightly-ui/
+zuora-se-demo-data-agent/
 ├── backend/
 │   ├── app/
 │   │   ├── main.py           # FastAPI app factory

@@ -26,8 +26,7 @@ export function Shell({ user, children }: ShellProps) {
       <header className="border-b border-border">
         <div className="container flex h-14 items-center justify-between">
           <Link to="/" className="flex items-center gap-2 font-semibold">
-            <span className="text-lg">zuora-nightly</span>
-            <span className="text-xs font-normal text-muted-foreground">internal</span>
+            <span className="text-lg">Zuora SE Demo Data Agent</span>
           </Link>
           <nav className="flex items-center gap-4 text-sm">
             <Link to="/" className="hover:text-primary">

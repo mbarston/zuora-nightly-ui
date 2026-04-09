@@ -33,7 +33,7 @@ from typing import Any
 import httpx
 
 
-logger = logging.getLogger("zuora-nightly.catalog_import")
+logger = logging.getLogger("zuora-se-agent.catalog_import")
 
 
 # Rough pecking order for SaaS-style tier names. First match wins.

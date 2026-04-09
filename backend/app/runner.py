@@ -91,7 +91,7 @@ def find_concurrency_blocker(db: Session, tenant_id: int) -> str | None:
     return None
 
 
-logger = logging.getLogger("zuora-nightly.runner")
+logger = logging.getLogger("zuora-se-agent.runner")
 
 
 # Path to the baked-in skill directory. The SDK will load

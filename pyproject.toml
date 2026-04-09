@@ -1,5 +1,5 @@
 [project]
-name = "zuora-nightly-ui"
+name = "zuora-se-demo-data-agent"
 version = "0.1.0"
 description = "Internal UI for running the zuora-demo-data-nightly skill per team member, per tenant."
 requires-python = ">=3.11"

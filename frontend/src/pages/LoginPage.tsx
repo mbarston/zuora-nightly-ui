@@ -22,9 +22,9 @@ export function LoginPage() {
     <div className="flex min-h-screen items-center justify-center bg-background">
       <Card className="w-full max-w-md">
         <CardHeader>
-          <CardTitle>zuora-nightly</CardTitle>
+          <CardTitle>Zuora SE Demo Data Agent</CardTitle>
           <CardDescription>
-            Internal Zuora demo-data runner. Sign in to continue.
+            Generate realistic demo data in your Zuora sandbox. Sign in to continue.
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">

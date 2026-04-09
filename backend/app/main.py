@@ -29,7 +29,7 @@ from app.routers.api import core as api_core
 from app.scheduler import start_scheduler, stop_scheduler
 
 
-logger = logging.getLogger("zuora-nightly")
+logger = logging.getLogger("zuora-se-agent")
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
 
 

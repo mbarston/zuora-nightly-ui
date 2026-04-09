@@ -34,7 +34,7 @@ from app.db import SessionLocal
 from app.models import Run, Schedule, Tenant
 
 
-logger = logging.getLogger("zuora-nightly.scheduler")
+logger = logging.getLogger("zuora-se-agent.scheduler")
 
 
 # Single global scheduler instance. Created lazily so tests that don't
@@ -146,7 +146,7 @@ def _register_job(sched: Schedule) -> None:
         trigger=trigger,
         args=[sched.id],
         id=_job_id(sched.id),
-        name=f"zuora-nightly schedule-{sched.id} ({sched.cron})",
+        name=f"zuora-se-agent schedule-{sched.id} ({sched.cron})",
         replace_existing=True,
         coalesce=True,          # collapse missed fires into one
         max_instances=1,        # belt-and-suspenders against overlap
