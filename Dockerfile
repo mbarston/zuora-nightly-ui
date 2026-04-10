@@ -19,8 +19,9 @@ FROM python:3.12-slim AS runtime
 WORKDIR /app
 
 # System deps for the claude-agent-sdk bundled CLI + npx (zuora-mcp)
+# gosu lets the entrypoint fix volume ownership as root then drop privileges.
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    curl git ca-certificates \
+    curl git ca-certificates gosu \
     && curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
     && apt-get install -y nodejs \
     && rm -rf /var/lib/apt/lists/*
@@ -41,14 +42,16 @@ RUN mkdir -p /data
 # Create non-root user (Claude CLI refuses --permission-mode bypassPermissions as root)
 RUN useradd -m -s /bin/bash agent && chown -R agent:agent /app /data
 
+# Entrypoint fixes /data volume ownership then drops to 'agent' via gosu
+COPY entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
+
 # Put backend/ on PYTHONPATH so `import app` works without editable install
 ENV PYTHONPATH=/app/backend
 # Point SQLite at the persistent volume
 ENV DATABASE_URL=sqlite:////data/app.db
 
-USER agent
 EXPOSE 8765
 
-CMD ["python", "-m", "uvicorn", "app.main:app", \
-     "--host", "0.0.0.0", "--port", "8765", \
-     "--workers", "1", "--log-level", "info"]
+# Start as root so entrypoint can chown the volume, then gosu drops to agent
+CMD ["/entrypoint.sh"]
