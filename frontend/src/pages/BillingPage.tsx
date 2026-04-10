@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { useParams } from "react-router-dom";
+import { Link, useParams } from "react-router-dom";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import {
   CreditCard,
@@ -11,6 +11,7 @@ import {
   CheckCircle2,
   XCircle,
   AlertTriangle,
+  ArrowLeft,
 } from "lucide-react";
 import { api } from "@/lib/api";
 import type { OpenInvoice, PaymentItem } from "@/lib/types";
@@ -184,7 +185,13 @@ export function BillingPage() {
     <div className="space-y-6">
       {/* Header */}
       <div>
-        <h1 className="text-2xl font-semibold flex items-center gap-2">
+        <Button variant="ghost" size="sm" asChild>
+          <Link to="/">
+            <ArrowLeft className="mr-1 h-4 w-4" />
+            Back to dashboard
+          </Link>
+        </Button>
+        <h1 className="text-2xl font-semibold flex items-center gap-2 mt-2">
           <CreditCard className="h-6 w-6" />
           Billing & Payments
         </h1>

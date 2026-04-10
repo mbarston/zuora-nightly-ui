@@ -178,9 +178,10 @@ export function ChatPage() {
       {/* Header */}
       <div className="flex items-center justify-between border-b px-4 py-2">
         <div className="flex items-center gap-3">
-          <Button variant="ghost" size="icon" asChild>
+          <Button variant="ghost" size="sm" asChild>
             <Link to="/">
-              <ArrowLeft className="h-4 w-4" />
+              <ArrowLeft className="mr-1 h-4 w-4" />
+              Back to dashboard
             </Link>
           </Button>
           <div className="flex items-center gap-2">
