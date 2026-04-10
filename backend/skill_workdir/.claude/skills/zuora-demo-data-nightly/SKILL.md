@@ -280,6 +280,56 @@ For each mandatory subscription, at runtime:
 
 These three mandatory posts are **in addition to** the 5-10 random usage posts and should be called out separately in the final report so it's clear the PPDD / min-commit scenarios received activity.
 
+### STEP 3e: Apply Payments to Open Invoices
+
+1. Check if the tenant config's `payments` section has `enabled: true`. If not, skip this step entirely.
+2. Query posted invoices with open balances:
+   ```
+   query_objects(objectType: "Invoices", filter: ["balance.GT:0", "status.EQ:Posted"], fields: ["id", "invoicenumber", "invoicedate", "amount", "balance", "accountid"], pageSize: 50)
+   ```
+3. Randomly select a percentage of them based on the config's `pay_percentage` (min/max range, default 60–80%).
+4. For each selected invoice:
+   a. Look up the account's currency:
+      ```
+      query_objects(objectType: "Accounts", filter: ["id.EQ:<account-id>"], fields: ["currency"])
+      ```
+   b. Calculate payment date = invoice date + random(`payment_lag_days` min–max, default 1–5 days). For backfill runs, use the backfill date + lag days instead (not today).
+   c. Create payment via Bash calling `zuora_helpers.py`:
+      ```bash
+      python3 .claude/skills/zuora-demo-data-nightly/scripts/zuora_helpers.py apply-payment \
+        --account-id <account-id> \
+        --invoice-id <invoice-id> \
+        --amount <invoice-balance> \
+        --currency <account-currency> \
+        --effective-date <YYYY-MM-DD>
+      ```
+   d. The helper prints JSON on success: `{"success": true, "payment_number": "P-00000108", "amount": 1250.00}`
+5. Log results for the report.
+6. If no invoices are found, log "No open invoices found" and continue — don't treat it as an error.
+7. If a payment fails, log the error and continue with the next one.
+
+**IMPORTANT payment notes:**
+- The helper uses External payment type (no gateway needed) and auto-discovers the tenant's WireTransfer/Cash payment method.
+- Payment amount is always the full invoice balance (not partial).
+- For backfill runs, the effective date should be the backfill date + lag days, not today.
+
+### STEP 3f: Write Off Invoices via Credit Memo
+
+1. Check if the tenant config's `writeoffs` section has `enabled: true`. If not, skip this step entirely.
+2. Check the write-off frequency/cadence from config (`every_other_run` by default). For simplicity, the agent should decide probabilistically — ~50% chance of running write-offs on any given run.
+3. Query oldest posted invoices with open balances, sorted by date ascending: same query as 3e but pick the oldest 1–2 invoices under the `max_invoice_amount` threshold (default $500).
+4. For each selected invoice:
+   a. Create credit memo and apply it via Bash calling `zuora_helpers.py`:
+      ```bash
+      python3 .claude/skills/zuora-demo-data-nightly/scripts/zuora_helpers.py create-credit-memo \
+        --invoice-id <invoice-id> \
+        --reason-code "Write-off" \
+        --comment "Small balance write-off — demo data" \
+        --apply
+      ```
+   b. The helper prints JSON on success: `{"success": true, "credit_memo_number": "CM00000005", "amount": 89.50, "applied": true}`
+5. Log results for the report. Count should be 0–2 per run.
+
 ### Amendment & usage strategy:
 - **Upgrades:** Basic→Pro or Pro→Enterprise. Query the sub's rate plans, remove the current one, add the higher-tier equivalent (Annual→Annual, Monthly→Monthly)
 - **Add product:** Add Analytics or AI Insights to subs that don't already have them
@@ -314,6 +364,16 @@ After completing all actions, produce a summary:
 | Subscription | Charge | Quantity | UOM |
 |-------------|--------|----------|-----|
 | ... | ... | 12,500 | API Calls |
+
+### Payments Applied: X processed
+| Invoice | Account | Amount | Payment Date | Payment # |
+|---------|---------|--------|-------------|-----------|
+| INV00000042 | Apex Technologies | $1,250.00 | 2026-04-12 | P-00000108 |
+
+### Write-offs: X processed
+| Invoice | Account | Amount | Credit Memo # | Reason |
+|---------|---------|--------|--------------|--------|
+| INV00000018 | DataVault Inc | $89.50 | CM00000005 | Small balance write-off |
 
 ### Data Story Health
 - New + Upgrades: X | Cancellations + Downgrades: Y | Net Growth: +Z

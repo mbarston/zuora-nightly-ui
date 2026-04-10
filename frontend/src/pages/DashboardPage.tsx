@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate } from "react-router-dom";
-import { CalendarClock, MessageSquare, Play, Pencil, Plus, Settings, Trash2 } from "lucide-react";
+import { CalendarClock, CreditCard, MessageSquare, Play, Pencil, Plus, Settings, Trash2 } from "lucide-react";
 import { api } from "@/lib/api";
 import type { DashboardRow } from "@/lib/types";
 import { formatDateTime, formatUsd } from "@/lib/utils";
@@ -142,6 +142,12 @@ export function DashboardPage() {
                     <Link to={`/tenants/${row.tenant.id}/chat`}>
                       <MessageSquare className="mr-1 h-4 w-4" />
                       Chat
+                    </Link>
+                  </Button>
+                  <Button variant="outline" asChild>
+                    <Link to={`/tenants/${row.tenant.id}/billing`}>
+                      <CreditCard className="mr-1 h-4 w-4" />
+                      Billing
                     </Link>
                   </Button>
                   <Button variant="outline" asChild>

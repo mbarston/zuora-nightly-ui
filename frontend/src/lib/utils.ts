@@ -24,3 +24,8 @@ export function formatUsd(cost: number | null | undefined): string {
   if (cost == null) return "—";
   return `$${cost.toFixed(4)}`;
 }
+
+export function formatCurrency(amount: number | null | undefined): string {
+  if (amount == null) return "—";
+  return `$${amount.toFixed(2)}`;
+}

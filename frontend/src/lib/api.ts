@@ -3,19 +3,25 @@
 // (same-origin in prod, proxied through Vite in dev).
 import { QueryClient } from "@tanstack/react-query";
 import type {
+  ApplyPaymentsResponse,
   BackfillCreateBody,
   BackfillJob,
   BackfillJobDetail,
   BackfillPlanPreview,
+  BillRunResult,
+  BillRunStatus,
   CatalogImportPreview,
   CurrentUser,
   DashboardRow,
+  OpenInvoice,
+  PaymentItem,
   Run,
   RunEvent,
   Schedule,
   Tenant,
   TenantConfig,
   TenantConfigEnvelope,
+  WriteOffResult,
 } from "./types";
 
 export class ApiError extends Error {
@@ -174,4 +180,25 @@ export const api = {
     req<BackfillJob>(`/api/backfills/${jobId}/cancel`, { method: "POST" }),
   listBackfills: (tenantId: number) =>
     req<BackfillJob[]>(`/api/tenants/${tenantId}/backfills`),
+
+  // --- Billing & Payments ---
+  triggerBillRun: (tenantId: number, targetDate: string, invoiceDate?: string) =>
+    req<BillRunResult>(`/api/tenants/${tenantId}/billing/run`, {
+      method: "POST",
+      body: JSON.stringify({ target_date: targetDate, invoice_date: invoiceDate }),
+    }),
+  getBillRunStatus: (tenantId: number, billRunId: string) =>
+    req<BillRunStatus>(`/api/tenants/${tenantId}/billing/run-status/${billRunId}`),
+  getOpenInvoices: (tenantId: number) =>
+    req<OpenInvoice[]>(`/api/tenants/${tenantId}/billing/open-invoices`),
+  applyPayments: (tenantId: number, payments: PaymentItem[]) =>
+    req<ApplyPaymentsResponse>(`/api/tenants/${tenantId}/billing/apply-payments`, {
+      method: "POST",
+      body: JSON.stringify({ payments }),
+    }),
+  writeOffInvoice: (tenantId: number, invoiceId: string, amount: number, reasonCode?: string, comment?: string) =>
+    req<WriteOffResult>(`/api/tenants/${tenantId}/billing/write-off`, {
+      method: "POST",
+      body: JSON.stringify({ invoice_id: invoiceId, amount, reason_code: reasonCode, comment }),
+    }),
 };

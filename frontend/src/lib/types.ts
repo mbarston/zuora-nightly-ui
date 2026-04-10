@@ -62,6 +62,20 @@ export interface TenantConfig {
   amendment_mix: Record<string, number>;
   growth_bias_bp: number;
   name_pool: NamePool;
+  payments: {
+    enabled: boolean;
+    pay_percentage_min: number;
+    pay_percentage_max: number;
+    payment_lag_days_min: number;
+    payment_lag_days_max: number;
+  };
+  writeoffs: {
+    enabled: boolean;
+    frequency: string;
+    count_min: number;
+    count_max: number;
+    max_invoice_amount: number;
+  };
 }
 
 export interface ValidationIssue {
@@ -190,4 +204,62 @@ export interface BackfillCreateBody {
   end_date: string;
   granularity: "monthly";
   label: string;
+}
+
+// --- Billing & Payments ---------------------------------------------------
+
+export interface BillRunResult {
+  id: string;
+  status: string;
+}
+
+export interface BillRunStatus {
+  id: string;
+  status: string;
+  invoices_generated: number;
+  credit_memos_generated: number;
+  errors: number;
+  created_date: string | null;
+}
+
+export interface OpenInvoice {
+  id: string;
+  invoice_number: string;
+  invoice_date: string;
+  amount: number;
+  balance: number;
+  account_id: string;
+  account_name: string;
+  currency: string;
+  due_date: string;
+  age_days: number;
+}
+
+export interface PaymentItem {
+  invoice_id: string;
+  account_id: string;
+  amount: number;
+  effective_date: string;
+  currency: string;
+}
+
+export interface PaymentResult {
+  success: boolean;
+  payment_id: string;
+  payment_number: string;
+  amount: number;
+  status: string;
+}
+
+export interface ApplyPaymentsResponse {
+  results: PaymentResult[];
+  errors: Array<{ invoice_id: string; error: string }>;
+}
+
+export interface WriteOffResult {
+  success: boolean;
+  credit_memo_id: string;
+  credit_memo_number: string;
+  amount: number;
+  applied: boolean;
 }

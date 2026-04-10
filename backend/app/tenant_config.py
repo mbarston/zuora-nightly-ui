@@ -130,6 +130,22 @@ DEFAULT_NAME_POOL: dict[str, list[str]] = {
     ],
 }
 
+DEFAULT_PAYMENTS: dict = {
+    "enabled": True,
+    "pay_percentage_min": 60,
+    "pay_percentage_max": 80,
+    "payment_lag_days_min": 1,
+    "payment_lag_days_max": 5,
+}
+
+DEFAULT_WRITEOFFS: dict = {
+    "enabled": True,
+    "frequency": "every_other_run",
+    "count_min": 1,
+    "count_max": 2,
+    "max_invoice_amount": 500.00,
+}
+
 
 def seed_default_config(tenant_id: int) -> TenantConfig:
     """Build a fresh TenantConfig row pre-populated with the defaults above."""
@@ -151,6 +167,8 @@ def seed_default_config(tenant_id: int) -> TenantConfig:
         amendment_mix=dict(DEFAULT_AMENDMENT_MIX),
         growth_bias_bp=100,
         name_pool=dict(DEFAULT_NAME_POOL),
+        payments=dict(DEFAULT_PAYMENTS),
+        writeoffs=dict(DEFAULT_WRITEOFFS),
         created_at=now,
         updated_at=now,
     )
@@ -363,6 +381,27 @@ def validate(config: TenantConfig | None) -> list[ValidationIssue]:
             )
         )
 
+    # --- payments ---
+    payments = config.payments or {}
+    if payments.get("enabled"):
+        pmin = payments.get("pay_percentage_min", 60)
+        pmax = payments.get("pay_percentage_max", 80)
+        if not isinstance(pmin, (int, float)) or not isinstance(pmax, (int, float)):
+            issues.append(ValidationIssue("payments", "error", "Pay percentage min/max must be numbers."))
+        elif pmin < 0 or pmax > 100 or pmin > pmax:
+            issues.append(ValidationIssue("payments", "error", f"Pay percentage range {pmin}–{pmax} is invalid (must be 0–100, min ≤ max)."))
+
+    # --- writeoffs ---
+    writeoffs = config.writeoffs or {}
+    if writeoffs.get("enabled"):
+        wmin = writeoffs.get("count_min", 1)
+        wmax = writeoffs.get("count_max", 2)
+        if not isinstance(wmin, int) or not isinstance(wmax, int) or wmin < 0 or wmax < wmin:
+            issues.append(ValidationIssue("writeoffs", "error", f"Write-off count range {wmin}–{wmax} is invalid."))
+        max_amt = writeoffs.get("max_invoice_amount", 500)
+        if not isinstance(max_amt, (int, float)) or max_amt <= 0:
+            issues.append(ValidationIssue("writeoffs", "error", "Write-off max invoice amount must be positive."))
+
     # --- growth bias sanity ---
     if config.growth_bias_bp is None or config.growth_bias_bp <= 0:
         issues.append(
@@ -507,6 +546,29 @@ def to_prompt_markdown(tenant_name: str, config: TenantConfig) -> str:
         )
     else:
         lines.append("*(use realistic tech-industry names of your choice)*")
+    lines.append("")
+
+    # Payments
+    payments = config.payments or {}
+    lines.append("### Payments")
+    if payments.get("enabled"):
+        lines.append(f"- **Enabled** — apply payments to open invoices each run")
+        lines.append(f"- Pay percentage: {payments.get('pay_percentage_min', 60)}–{payments.get('pay_percentage_max', 80)}% of open invoices")
+        lines.append(f"- Payment lag: {payments.get('payment_lag_days_min', 1)}–{payments.get('payment_lag_days_max', 5)} days after invoice date")
+    else:
+        lines.append("- **Disabled** — skip payment application")
+    lines.append("")
+
+    # Write-offs
+    writeoffs = config.writeoffs or {}
+    lines.append("### Write-offs")
+    if writeoffs.get("enabled"):
+        lines.append(f"- **Enabled** — write off small invoices periodically")
+        lines.append(f"- Frequency: {writeoffs.get('frequency', 'every_other_run')}")
+        lines.append(f"- Count per run: {writeoffs.get('count_min', 1)}–{writeoffs.get('count_max', 2)} invoices")
+        lines.append(f"- Max invoice amount: ${writeoffs.get('max_invoice_amount', 500):.2f}")
+    else:
+        lines.append("- **Disabled** — skip write-offs")
     lines.append("")
 
     return "\n".join(lines)

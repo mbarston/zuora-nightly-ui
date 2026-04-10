@@ -11,6 +11,7 @@ import { RunDetailPage } from "./pages/RunDetailPage";
 import { RunHistoryPage } from "./pages/RunHistoryPage";
 import { BackfillJobPage } from "./pages/BackfillJobPage";
 import { ChatPage } from "./pages/ChatPage";
+import { BillingPage } from "./pages/BillingPage";
 
 function useCurrentUser() {
   return useQuery<CurrentUser, ApiError>({
@@ -105,6 +106,14 @@ export default function App() {
         element={
           <RequireAuth>
             <ChatPage />
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/tenants/:tenantId/billing"
+        element={
+          <RequireAuth>
+            <BillingPage />
           </RequireAuth>
         }
       />

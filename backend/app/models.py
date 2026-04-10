@@ -165,6 +165,12 @@ class TenantConfig(Base):
     # --- name pool ---
     name_pool: Mapped[dict] = mapped_column(JSON, default=dict)
 
+    # --- payments & write-offs ---
+    payments: Mapped[dict] = mapped_column(JSON, default=dict)
+    # Example: {"enabled": true, "pay_percentage_min": 60, "pay_percentage_max": 80, "payment_lag_days_min": 1, "payment_lag_days_max": 5}
+    writeoffs: Mapped[dict] = mapped_column(JSON, default=dict)
+    # Example: {"enabled": true, "frequency": "every_other_run", "count_min": 1, "count_max": 2, "max_invoice_amount": 500}
+
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=_now, onupdate=_now

@@ -23,6 +23,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Separator } from "@/components/ui/separator";
+import { Checkbox } from "@/components/ui/checkbox";
 import { CatalogImportModal } from "@/components/tenants/CatalogImportModal";
 import { SchedulesSection } from "@/components/schedules/SchedulesSection";
 
@@ -46,7 +47,24 @@ export function TenantConfigPage() {
 
   useEffect(() => {
     if (envQ.data && !cfg) {
-      setCfg(envQ.data.config);
+      const c = envQ.data.config;
+      setCfg({
+        ...c,
+        payments: c.payments ?? {
+          enabled: false,
+          pay_percentage_min: 50,
+          pay_percentage_max: 100,
+          payment_lag_days_min: 0,
+          payment_lag_days_max: 30,
+        },
+        writeoffs: c.writeoffs ?? {
+          enabled: false,
+          frequency: "monthly",
+          count_min: 1,
+          count_max: 5,
+          max_invoice_amount: 500,
+        },
+      });
     }
   }, [envQ.data, cfg]);
 
@@ -583,6 +601,160 @@ export function TenantConfigPage() {
                 })
               }
             />
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* Payments & Write-offs */}
+      <Card>
+        <CardHeader>
+          <CardTitle>Payments & Write-offs</CardTitle>
+          <p className="text-xs text-muted-foreground">
+            Configure automatic payment application and invoice write-off behaviour.
+          </p>
+        </CardHeader>
+        <CardContent className="space-y-6">
+          {/* Payments */}
+          <div className="space-y-3">
+            <div className="flex items-center gap-2">
+              <Checkbox
+                id="payments-enabled"
+                checked={cfg.payments.enabled}
+                onCheckedChange={(v) =>
+                  upd({ payments: { ...cfg.payments, enabled: v === true } })
+                }
+              />
+              <Label htmlFor="payments-enabled" className="text-sm font-semibold">
+                Enable payments
+              </Label>
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <Label className="text-xs">Pay percentage range</Label>
+                <div className="flex items-center gap-2">
+                  <Input
+                    type="number"
+                    min={0}
+                    max={100}
+                    value={cfg.payments.pay_percentage_min}
+                    onChange={(e) =>
+                      upd({
+                        payments: { ...cfg.payments, pay_percentage_min: Number(e.target.value) },
+                      })
+                    }
+                    disabled={!cfg.payments.enabled}
+                    className="max-w-[6rem]"
+                  />
+                  <span className="text-muted-foreground">–</span>
+                  <Input
+                    type="number"
+                    min={0}
+                    max={100}
+                    value={cfg.payments.pay_percentage_max}
+                    onChange={(e) =>
+                      upd({
+                        payments: { ...cfg.payments, pay_percentage_max: Number(e.target.value) },
+                      })
+                    }
+                    disabled={!cfg.payments.enabled}
+                    className="max-w-[6rem]"
+                  />
+                </div>
+              </div>
+              <div>
+                <Label className="text-xs">Payment lag (days)</Label>
+                <div className="flex items-center gap-2">
+                  <Input
+                    type="number"
+                    min={0}
+                    value={cfg.payments.payment_lag_days_min}
+                    onChange={(e) =>
+                      upd({
+                        payments: { ...cfg.payments, payment_lag_days_min: Number(e.target.value) },
+                      })
+                    }
+                    disabled={!cfg.payments.enabled}
+                    className="max-w-[6rem]"
+                  />
+                  <span className="text-muted-foreground">–</span>
+                  <Input
+                    type="number"
+                    min={0}
+                    value={cfg.payments.payment_lag_days_max}
+                    onChange={(e) =>
+                      upd({
+                        payments: { ...cfg.payments, payment_lag_days_max: Number(e.target.value) },
+                      })
+                    }
+                    disabled={!cfg.payments.enabled}
+                    className="max-w-[6rem]"
+                  />
+                </div>
+              </div>
+            </div>
+          </div>
+          <Separator />
+          {/* Write-offs */}
+          <div className="space-y-3">
+            <div className="flex items-center gap-2">
+              <Checkbox
+                id="writeoffs-enabled"
+                checked={cfg.writeoffs.enabled}
+                onCheckedChange={(v) =>
+                  upd({ writeoffs: { ...cfg.writeoffs, enabled: v === true } })
+                }
+              />
+              <Label htmlFor="writeoffs-enabled" className="text-sm font-semibold">
+                Enable write-offs
+              </Label>
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <Label className="text-xs">Write-offs per run</Label>
+                <div className="flex items-center gap-2">
+                  <Input
+                    type="number"
+                    min={0}
+                    value={cfg.writeoffs.count_min}
+                    onChange={(e) =>
+                      upd({
+                        writeoffs: { ...cfg.writeoffs, count_min: Number(e.target.value) },
+                      })
+                    }
+                    disabled={!cfg.writeoffs.enabled}
+                    className="max-w-[6rem]"
+                  />
+                  <span className="text-muted-foreground">–</span>
+                  <Input
+                    type="number"
+                    min={0}
+                    value={cfg.writeoffs.count_max}
+                    onChange={(e) =>
+                      upd({
+                        writeoffs: { ...cfg.writeoffs, count_max: Number(e.target.value) },
+                      })
+                    }
+                    disabled={!cfg.writeoffs.enabled}
+                    className="max-w-[6rem]"
+                  />
+                </div>
+              </div>
+              <div>
+                <Label className="text-xs">Max invoice amount ($)</Label>
+                <Input
+                  type="number"
+                  min={0}
+                  value={cfg.writeoffs.max_invoice_amount}
+                  onChange={(e) =>
+                    upd({
+                      writeoffs: { ...cfg.writeoffs, max_invoice_amount: Number(e.target.value) },
+                    })
+                  }
+                  disabled={!cfg.writeoffs.enabled}
+                  className="max-w-[8rem]"
+                />
+              </div>
+            </div>
           </div>
         </CardContent>
       </Card>

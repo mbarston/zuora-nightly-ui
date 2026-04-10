@@ -102,6 +102,8 @@ class TenantConfigBody(BaseModel):
     amendment_mix: dict[str, int] = Field(default_factory=dict)
     growth_bias_bp: int = 100
     name_pool: NamePoolModel = Field(default_factory=NamePoolModel)
+    payments: dict = Field(default_factory=dict)
+    writeoffs: dict = Field(default_factory=dict)
 
 
 class ValidationIssueOut(BaseModel):

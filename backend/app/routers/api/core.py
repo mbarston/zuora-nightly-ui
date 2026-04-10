@@ -170,6 +170,8 @@ def _envelope(tenant: Tenant, cfg: TenantConfig) -> TenantConfigEnvelopeOut:
                 "amendment_mix": cfg.amendment_mix or {},
                 "growth_bias_bp": cfg.growth_bias_bp,
                 "name_pool": cfg.name_pool or {"prefixes": [], "suffixes": []},
+                "payments": cfg.payments or {},
+                "writeoffs": cfg.writeoffs or {},
             }
         ),
         issues=[
@@ -358,6 +360,8 @@ def save_config(
     cfg.amendment_mix = {str(k): int(v) for k, v in body.amendment_mix.items()}
     cfg.growth_bias_bp = body.growth_bias_bp
     cfg.name_pool = body.name_pool.model_dump()
+    cfg.payments = body.payments
+    cfg.writeoffs = body.writeoffs
     db.commit()
     db.refresh(cfg)
     return _envelope(tenant, cfg)
@@ -1057,9 +1061,154 @@ async def tenant_chat(
 
 
 # ---------------------------------------------------------------------------
+# /api/tenants/{id}/billing — interactive billing & payments
+# ---------------------------------------------------------------------------
+
+
+class BillRunRequest(PydanticBaseModel):
+    target_date: str  # ISO date string
+    invoice_date: str | None = None
+
+
+class ApplyPaymentsRequest(PydanticBaseModel):
+    class PaymentItem(PydanticBaseModel):
+        invoice_id: str
+        account_id: str
+        amount: float
+        effective_date: str  # ISO date string
+        currency: str = "USD"
+    payments: list[PaymentItem]
+
+
+class WriteOffRequest(PydanticBaseModel):
+    invoice_id: str
+    amount: float
+    reason_code: str = "Write-off"
+    comment: str = "Small balance write-off"
+
+
+@router.post("/tenants/{tenant_id}/billing/run")
+async def trigger_bill_run(
+    tenant_id: int,
+    body: BillRunRequest,
+    db: Session = Depends(get_db),
+    user: User = Depends(require_api_user),
+):
+    """Trigger an ad-hoc bill run in Zuora."""
+    from datetime import date as date_type
+    from app.billing import create_bill_run, BillingError
+
+    tenant = _owned_tenant(db, user, tenant_id)
+    try:
+        target = date_type.fromisoformat(body.target_date)
+        inv_date = date_type.fromisoformat(body.invoice_date) if body.invoice_date else None
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=f"Invalid date: {e}") from e
+    try:
+        result = await create_bill_run(tenant, target, inv_date)
+    except BillingError as e:
+        raise HTTPException(status_code=502, detail=str(e)) from e
+    return result
+
+
+@router.get("/tenants/{tenant_id}/billing/run-status/{bill_run_id}")
+async def poll_bill_run_status(
+    tenant_id: int,
+    bill_run_id: str,
+    db: Session = Depends(get_db),
+    user: User = Depends(require_api_user),
+):
+    """Poll bill run status until completed."""
+    from app.billing import get_bill_run_status, BillingError
+
+    tenant = _owned_tenant(db, user, tenant_id)
+    try:
+        return await get_bill_run_status(tenant, bill_run_id)
+    except BillingError as e:
+        raise HTTPException(status_code=502, detail=str(e)) from e
+
+
+@router.get("/tenants/{tenant_id}/billing/open-invoices")
+async def fetch_open_invoices(
+    tenant_id: int,
+    db: Session = Depends(get_db),
+    user: User = Depends(require_api_user),
+):
+    """Fetch all open (posted, balance > 0) invoices from Zuora."""
+    from app.billing import get_open_invoices, BillingError
+
+    tenant = _owned_tenant(db, user, tenant_id)
+    try:
+        invoices = await get_open_invoices(tenant)
+    except BillingError as e:
+        raise HTTPException(status_code=502, detail=str(e)) from e
+    return invoices
+
+
+@router.post("/tenants/{tenant_id}/billing/apply-payments")
+async def apply_payments(
+    tenant_id: int,
+    body: ApplyPaymentsRequest,
+    db: Session = Depends(get_db),
+    user: User = Depends(require_api_user),
+):
+    """Apply payments to one or more invoices."""
+    from datetime import date as date_type
+    from app.billing import apply_payment, BillingError
+
+    tenant = _owned_tenant(db, user, tenant_id)
+    results = []
+    errors = []
+    for item in body.payments:
+        try:
+            eff_date = date_type.fromisoformat(item.effective_date)
+            result = await apply_payment(
+                tenant,
+                account_id=item.account_id,
+                invoice_id=item.invoice_id,
+                amount=item.amount,
+                effective_date=eff_date,
+                currency=item.currency,
+            )
+            results.append(result)
+        except (BillingError, Exception) as e:
+            errors.append({
+                "invoice_id": item.invoice_id,
+                "error": str(e),
+            })
+    return {"results": results, "errors": errors}
+
+
+@router.post("/tenants/{tenant_id}/billing/write-off")
+async def create_write_off_endpoint(
+    tenant_id: int,
+    body: WriteOffRequest,
+    db: Session = Depends(get_db),
+    user: User = Depends(require_api_user),
+):
+    """Create a credit memo write-off for an invoice."""
+    from app.billing import create_write_off, BillingError
+
+    tenant = _owned_tenant(db, user, tenant_id)
+    try:
+        result = await create_write_off(
+            tenant,
+            invoice_id=body.invoice_id,
+            amount=body.amount,
+            reason_code=body.reason_code,
+            comment=body.comment,
+        )
+    except BillingError as e:
+        raise HTTPException(status_code=502, detail=str(e)) from e
+    return result
+
+
+# ---------------------------------------------------------------------------
 # Health check — unauthenticated, always returns 200
 # ---------------------------------------------------------------------------
 
 @router.get("/health")
 def health():
     return {"status": "ok"}
+
+
