@@ -348,6 +348,12 @@ async def _execute_run(run_id: int) -> None:
         run_label = f"run-{run.id} tenant={tenant.name!r}"
 
     # --- Build options ---
+    # Capture stderr from the bundled CLI so we can diagnose failures.
+    stderr_lines: list[str] = []
+    def _on_stderr(line: str) -> None:
+        stderr_lines.append(line)
+        logger.debug("[%s] CLI stderr: %s", run_label, line)
+
     options = ClaudeAgentOptions(
         cwd=str(SKILL_WORKDIR),
         env={
@@ -369,9 +375,16 @@ async def _execute_run(run_id: int) -> None:
         permission_mode="bypassPermissions",
         # Load .claude/skills/ from cwd so SKILL.md is auto-discovered.
         setting_sources=["project"],
+        stderr=_on_stderr,
     )
 
-    logger.info("[%s] starting", run_label)
+    # --- Pre-flight checks ---
+    import os
+    api_key = settings.ANTHROPIC_API_KEY or os.environ.get("ANTHROPIC_API_KEY", "")
+    if not api_key:
+        _mark_failed(run_id, "ANTHROPIC_API_KEY is not set. Set it via `fly secrets set ANTHROPIC_API_KEY=sk-ant-...`")
+        return
+    logger.info("[%s] starting (API key length=%d, cwd=%s)", run_label, len(api_key), SKILL_WORKDIR)
 
     # --- Stream ---
     seq = 0
@@ -415,6 +428,15 @@ async def _execute_run(run_id: int) -> None:
                 )
     except Exception as e:  # noqa: BLE001
         logger.exception("[%s] query failed", run_label)
+        # Extract extra detail from ProcessError if available
+        error_detail = f"{type(e).__name__}: {e}"
+        for attr in ("stderr", "stdout", "output", "returncode", "cmd"):
+            val = getattr(e, attr, None)
+            if val:
+                error_detail += f"\n{attr}: {val}"
+        if stderr_lines:
+            error_detail += "\n\n--- CLI stderr ---\n" + "\n".join(stderr_lines[-50:])
+        error_detail += f"\n\n{traceback.format_exc()}"
         with SessionLocal() as db:
             run = db.get(Run, run_id)
             if run is not None:
@@ -422,7 +444,7 @@ async def _execute_run(run_id: int) -> None:
                     db,
                     run,
                     status="failed",
-                    error=f"{type(e).__name__}: {e}\n\n{traceback.format_exc()}",
+                    error=error_detail,
                 )
         return
 
