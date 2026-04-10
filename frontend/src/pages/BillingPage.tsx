@@ -147,7 +147,7 @@ export function BillingPage() {
     onSuccess: (data) => {
       setPaymentResults(data);
       setSelected(new Set());
-      // Refresh invoices to show updated balances
+      // Refresh invoices in the background — takes ~15s to round-trip to Zuora
       refetchInvoices();
     },
   });
@@ -290,9 +290,15 @@ export function BillingPage() {
               )}
               {invoices ? "Refresh invoices" : "Import open invoices"}
             </Button>
-            {invoices && (
+            {invoices && !fetchingInvoices && (
               <span className="text-sm text-muted-foreground">
                 {invoices.length} invoice{invoices.length !== 1 ? "s" : ""} with open balance
+              </span>
+            )}
+            {fetchingInvoices && invoices && (
+              <span className="text-sm text-yellow-400 flex items-center gap-1">
+                <Loader2 className="h-3 w-3 animate-spin" />
+                Refreshing invoices from Zuora...
               </span>
             )}
           </div>
