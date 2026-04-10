@@ -476,6 +476,35 @@ def get_run_events(
     )
 
 
+@router.post("/runs/{run_id}/cancel", response_model=RunOut)
+async def stop_run(
+    run_id: int,
+    db: Session = Depends(get_db),
+    user: User = Depends(require_api_user),
+):
+    """Cancel an in-flight run by killing its asyncio task."""
+    from app.runner import cancel_run
+
+    run = db.get(Run, run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail="Run not found")
+    if run.status not in ("queued", "running"):
+        raise HTTPException(status_code=400, detail=f"Run is already {run.status}")
+
+    cancelled = cancel_run(run_id)
+    if not cancelled:
+        # Task already gone — mark it cancelled in the DB directly.
+        run.status = "cancelled"
+        run.finished_at = datetime.now(timezone.utc)
+        run.error_message = "Run cancelled by user."
+        db.commit()
+    # Give the task a moment to finalize in the DB before we re-read.
+    import asyncio
+    await asyncio.sleep(0.3)
+    db.refresh(run)
+    return run
+
+
 @router.get("/runs/{run_id}/stream")
 async def run_stream(
     run_id: int,

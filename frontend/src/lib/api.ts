@@ -125,6 +125,8 @@ export const api = {
   getRun: (runId: number) => req<Run>(`/api/runs/${runId}`),
   getRunEvents: (runId: number, sinceSeq = 0) =>
     req<RunEvent[]>(`/api/runs/${runId}/events?since=${sinceSeq}`),
+  cancelRun: (runId: number) =>
+    req<Run>(`/api/runs/${runId}/cancel`, { method: "POST" }),
   listRuns: (limit = 100) => req<Run[]>(`/api/runs?limit=${limit}`),
 
   // --- Schedules ---

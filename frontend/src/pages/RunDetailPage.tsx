@@ -1,7 +1,7 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Link, useParams } from "react-router-dom";
-import { ArrowLeft } from "lucide-react";
+import { ArrowLeft, Square } from "lucide-react";
 import { api } from "@/lib/api";
 import type { Run, RunEvent } from "@/lib/types";
 import { formatDateTime, formatUsd, cn } from "@/lib/utils";
@@ -91,6 +91,29 @@ export function RunDetailPage() {
   const toolCalls = terminalState?.tool_call_count ?? run?.tool_call_count ?? 0;
   const cost = terminalState?.cost_usd ?? run?.cost_usd ?? null;
 
+  const [stopping, setStopping] = useState(false);
+  const isRunning = status === "queued" || status === "running";
+
+  const handleStop = useCallback(async () => {
+    if (!isRunning || stopping) return;
+    setStopping(true);
+    try {
+      const updated = await api.cancelRun(runId);
+      setTerminalState({
+        status: updated.status as Run["status"],
+        summary_md: updated.summary_md ?? "",
+        error_message: updated.error_message ?? "",
+        tool_call_count: updated.tool_call_count ?? 0,
+        cost_usd: updated.cost_usd ?? null,
+        finished_at: updated.finished_at ?? null,
+      });
+    } catch (e) {
+      console.error("Failed to cancel run", e);
+    } finally {
+      setStopping(false);
+    }
+  }, [runId, isRunning, stopping]);
+
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
@@ -139,6 +162,17 @@ export function RunDetailPage() {
               </p>
             )}
           </div>
+          {isRunning && (
+            <Button
+              variant="destructive"
+              size="sm"
+              onClick={handleStop}
+              disabled={stopping}
+            >
+              <Square className="mr-1 h-4 w-4" />
+              {stopping ? "Stopping…" : "Stop Run"}
+            </Button>
+          )}
         </CardHeader>
         <CardContent>
           <div
@@ -161,6 +195,17 @@ export function RunDetailPage() {
           </CardHeader>
           <CardContent>
             <pre className="whitespace-pre-wrap break-words text-sm">{summary}</pre>
+          </CardContent>
+        </Card>
+      )}
+
+      {status === "cancelled" && (
+        <Card className="border-yellow-500/50">
+          <CardHeader>
+            <CardTitle className="text-yellow-400">Cancelled</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <pre className="whitespace-pre-wrap break-words text-xs">{error || "Run was cancelled by user."}</pre>
           </CardContent>
         </Card>
       )}

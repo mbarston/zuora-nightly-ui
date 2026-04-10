@@ -185,8 +185,12 @@ def _backfill_window_markdown(backfill_date: datetime) -> str:
 
 
 # ------------------------------------------------------------------
-# Entry point
+# Entry point + task tracking
 # ------------------------------------------------------------------
+
+# Global registry of in-flight asyncio tasks keyed by run_id.
+# Used by cancel_run() to abort a running execution.
+_active_tasks: dict[int, asyncio.Task] = {}
 
 
 def start_run_in_background(run_id: int) -> None:
@@ -195,7 +199,22 @@ def start_run_in_background(run_id: int) -> None:
     (which FastAPI route handlers are).
     """
     loop = asyncio.get_running_loop()
-    loop.create_task(_execute_run(run_id), name=f"run-{run_id}")
+    task = loop.create_task(_execute_run(run_id), name=f"run-{run_id}")
+    _active_tasks[run_id] = task
+    task.add_done_callback(lambda _t: _active_tasks.pop(run_id, None))
+
+
+def cancel_run(run_id: int) -> bool:
+    """
+    Cancel an in-flight run. Returns True if the task was found and
+    cancelled, False if there was no active task (already finished or
+    never started).
+    """
+    task = _active_tasks.get(run_id)
+    if task is None or task.done():
+        return False
+    task.cancel()
+    return True
 
 
 # ------------------------------------------------------------------
@@ -426,6 +445,18 @@ async def _execute_run(run_id: int) -> None:
                 seq = _persist_event(
                     run_id, seq, "error", {"error": f"persist failed: {inner}"}
                 )
+    except asyncio.CancelledError:
+        logger.info("[%s] cancelled by user", run_label)
+        with SessionLocal() as db:
+            run = db.get(Run, run_id)
+            if run is not None:
+                _finalize(
+                    db,
+                    run,
+                    status="cancelled",
+                    error="Run cancelled by user.",
+                )
+        return
     except Exception as e:  # noqa: BLE001
         logger.exception("[%s] query failed", run_label)
         # Extract extra detail from ProcessError if available
