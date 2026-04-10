@@ -38,11 +38,15 @@ COPY --from=frontend-build /app/frontend/dist ./frontend/dist
 # Data directory for SQLite (mount a persistent volume here on Fly)
 RUN mkdir -p /data
 
+# Create non-root user (Claude CLI refuses --permission-mode bypassPermissions as root)
+RUN useradd -m -s /bin/bash agent && chown -R agent:agent /app /data
+
 # Put backend/ on PYTHONPATH so `import app` works without editable install
 ENV PYTHONPATH=/app/backend
 # Point SQLite at the persistent volume
 ENV DATABASE_URL=sqlite:////data/app.db
 
+USER agent
 EXPOSE 8765
 
 CMD ["python", "-m", "uvicorn", "app.main:app", \
