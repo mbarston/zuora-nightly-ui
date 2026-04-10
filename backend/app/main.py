@@ -63,6 +63,8 @@ async def lifespan(app: FastAPI):
             "you run `cd frontend && npm run build`, or hit the Vite dev server "
             "on port 5173 instead."
         )
+    # Recover orphaned runs/backfills left in queued/running by a crash or restart.
+    _recover_orphaned_runs()
     try:
         await start_scheduler()
     except Exception:  # noqa: BLE001
@@ -73,6 +75,48 @@ async def lifespan(app: FastAPI):
         await stop_scheduler()
     except Exception:  # noqa: BLE001
         logger.exception("Error shutting down scheduler")
+
+
+def _recover_orphaned_runs() -> None:
+    """Mark any queued/running runs or backfills as failed on startup.
+
+    If the server crashed or restarted mid-run, those tasks are gone but the
+    DB rows still say 'running'. Clean them up so the tenant isn't permanently
+    locked out of new runs.
+    """
+    from datetime import datetime, timezone
+    from app.db import SessionLocal
+    from app.models import Run, BackfillJob
+
+    with SessionLocal() as db:
+        orphaned_runs = (
+            db.query(Run)
+            .filter(Run.status.in_(("queued", "running")))
+            .all()
+        )
+        for run in orphaned_runs:
+            run.status = "failed"
+            run.finished_at = datetime.now(timezone.utc)
+            run.error_message = "Run was interrupted by a server restart."
+            logger.warning("Recovered orphaned run-%d (was %s)", run.id, "running")
+
+        orphaned_jobs = (
+            db.query(BackfillJob)
+            .filter(BackfillJob.status.in_(("queued", "running")))
+            .all()
+        )
+        for job in orphaned_jobs:
+            job.status = "failed"
+            job.finished_at = datetime.now(timezone.utc)
+            job.error_message = "Backfill was interrupted by a server restart."
+            logger.warning("Recovered orphaned backfill-%d", job.id)
+
+        if orphaned_runs or orphaned_jobs:
+            db.commit()
+            logger.info(
+                "Recovered %d orphaned run(s) and %d orphaned backfill(s)",
+                len(orphaned_runs), len(orphaned_jobs),
+            )
 
 
 def create_app() -> FastAPI:
