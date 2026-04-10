@@ -1025,3 +1025,12 @@ async def tenant_chat(
             "Connection": "keep-alive",
         },
     )
+
+
+# ---------------------------------------------------------------------------
+# Health check — unauthenticated, always returns 200
+# ---------------------------------------------------------------------------
+
+@router.get("/health")
+def health():
+    return {"status": "ok"}
