@@ -6,7 +6,7 @@
 | **Priority** | High |
 | **Author** | Matt Barston |
 | **Created** | 2026-04-10 |
-| **Estimated effort** | Medium (2-3 sessions) |
+| **Estimated effort** | Large (4-5 sessions) |
 
 ---
 
@@ -209,40 +209,239 @@ Returns: `{"success": true, "credit_memo_number": "CM00000005", "amount": 89.50,
 
 ---
 
-## Implementation Plan
+---
 
-### Phase 1: Backend — zuora_helpers.py (Day 1)
+## Part B: Standalone Billing & Payments UI
 
-1. Add `apply-payment` subcommand
-   - Use Zuora SDK `PaymentsApi` or REST `POST /v1/payments`
-   - Support Invoice Settlement flow (create payment + apply to invoice)
-   - Handle errors gracefully (insufficient balance, invalid payment method, etc.)
-2. Add `create-credit-memo` subcommand
-   - Create credit memo from invoice
-   - Optionally auto-apply to zero out the invoice balance
-   - Support reason codes
-3. Test both commands manually against a sandbox
+In addition to the automated skill-run integration (Part A above), add a dedicated **Billing & Payments** page per tenant that gives SEs hands-on control over the billing-to-cash cycle. This is used for ad-hoc demo prep — run a bill run, review what invoices came out, and selectively apply payments.
 
-### Phase 2: Skill — SKILL.md (Day 1)
+### New Route: `/tenants/{tenantId}/billing`
 
-1. Add STEP 3e (payments) and STEP 3f (write-offs) to SKILL.md
+Accessible from the tenant card on the dashboard via a new **Billing** button (banknote/dollar icon).
+
+### Page Layout
+
+The page has three sequential workflow sections, each unlocking the next:
+
+---
+
+#### Section 1: Bill Run
+
+A card at the top that lets you trigger an ad-hoc bill run in Zuora.
+
+**UI:**
+```
+┌─────────────────────────────────────────────────────────┐
+│  Bill Run                                               │
+│                                                         │
+│  Target date:  [ 2026-04-10 ]    ┌──────────────────┐   │
+│                                  │  Run Billing  ▶   │   │
+│                                  └──────────────────┘   │
+│                                                         │
+│  Status: ● Completed — 23 invoices generated (4.2s)     │
+│  Last run: 2026-04-10 12:45 UTC                         │
+└─────────────────────────────────────────────────────────┘
+```
+
+**Behavior:**
+- **Target date** input defaults to today
+- **Run Billing** button triggers `POST /v1/object/bill-run` via a new backend endpoint
+- Bill runs are async in Zuora — the UI polls for completion status (Pending → Processing → Completed/Error)
+- Shows a spinner + progress state while running
+- On completion, shows invoice count and elapsed time
+- Automatically triggers the invoice import in Section 2
+
+**Backend endpoint:**
+- `POST /api/tenants/{tenantId}/billing/run` — Creates a bill run via Zuora REST API (`POST /v1/object/bill-run` with `InvoiceDate`, `TargetDate`, `Status: "Pending"`)
+- `GET /api/tenants/{tenantId}/billing/run-status/{billRunId}` — Polls status until terminal
+- Uses tenant's OAuth credentials (same pattern as skill runs)
+- Implemented in `zuora_helpers.py` with new `bill-run` subcommand, or directly in a new `backend/app/billing.py` module using `httpx`
+
+---
+
+#### Section 2: Open Invoices
+
+After a bill run completes (or on page load), fetch and display all open invoices.
+
+**UI:**
+```
+┌─────────────────────────────────────────────────────────────────────────────────────┐
+│  Open Invoices (23)                                    [ Refresh ]  [ Select All ]  │
+│                                                                                     │
+│  ☐  Invoice #       Account              Date         Amount      Balance    Age    │
+│  ─────────────────────────────────────────────────────────────────────────────────   │
+│  ☑  INV00000042     Apex Technologies     2026-04-01   $1,250.00   $1,250.00  9d    │
+│  ☑  INV00000041     NovaBridge Software   2026-04-01   $3,400.00   $3,400.00  9d    │
+│  ☐  INV00000039     CloudForge Solutions  2026-03-15   $890.00     $445.00    26d   │
+│  ☑  INV00000038     Quantum Dynamics      2026-03-01   $2,100.00   $2,100.00  40d   │
+│  ☐  INV00000035     Zenith Platforms      2026-02-15   $156.50     $156.50    54d   │
+│  ...                                                                                │
+│                                                                                     │
+│  Selected: 3 invoices · Total: $6,750.00                                            │
+└─────────────────────────────────────────────────────────────────────────────────────┘
+```
+
+**Behavior:**
+- **Import/Refresh** button queries Zuora: `query_objects(objectType: "Invoices", filter: ["balance.GT:0", "status.EQ:Posted"], fields: [...])`
+- Table shows invoice number, account name, invoice date, total amount, open balance, and aging (days since invoice date)
+- Sortable columns (by date, amount, balance, age)
+- Search/filter bar to filter by account name or invoice number
+- **Checkboxes** for selecting which invoices to pay
+- **Select All / Deselect All** toggle
+- Footer shows selected count and total balance of selected invoices
+
+**Backend endpoint:**
+- `GET /api/tenants/{tenantId}/billing/open-invoices` — Queries Zuora for posted invoices with balance > 0, enriches with account names
+
+---
+
+#### Section 3: Apply Payments
+
+Once invoices are selected, this section appears/expands to let you configure and submit payments.
+
+**UI:**
+```
+┌─────────────────────────────────────────────────────────────────────────────────────┐
+│  Apply Payments                                                                     │
+│                                                                                     │
+│  Payment date:  [ 2026-04-10 ]                                                      │
+│                                                                                     │
+│  ┌─────────────────────────────────────────────────────────────────────────────┐     │
+│  │  Invoice          Account              Balance       Pay Amount            │     │
+│  │  ────────────────────────────────────────────────────────────────────────   │     │
+│  │  INV00000042      Apex Technologies     $1,250.00     [ $1,250.00 ]  [Full]│     │
+│  │  INV00000041      NovaBridge Software   $3,400.00     [ $3,400.00 ]  [Full]│     │
+│  │  INV00000038      Quantum Dynamics      $2,100.00     [ $1,000.00 ]        │     │
+│  └─────────────────────────────────────────────────────────────────────────────┘     │
+│                                                                                     │
+│  Total payment: $5,650.00                                                           │
+│                                                                                     │
+│  ┌─────────────────────────────┐                                                    │
+│  │  Apply Payments (3)    💳   │                                                    │
+│  └─────────────────────────────┘                                                    │
+│                                                                                     │
+│  Results:                                                                           │
+│   ✓ INV00000042 — P-00000108 — $1,250.00                                            │
+│   ✓ INV00000041 — P-00000109 — $3,400.00                                            │
+│   ✓ INV00000038 — P-00000110 — $1,000.00 (partial, $1,100.00 remaining)             │
+│                                                                                     │
+│  3/3 payments applied · Total: $5,650.00                                            │
+└─────────────────────────────────────────────────────────────────────────────────────┘
+```
+
+**Behavior:**
+- **Payment date** input defaults to today, shared across all payments
+- Each selected invoice shows its open balance and an **editable payment amount** field
+  - Defaults to full balance
+  - **[Full]** button resets to full balance
+  - User can type a partial amount (must be > 0 and <= balance)
+- **Apply Payments** button submits all payments serially
+- Results stream in row by row as each payment succeeds/fails
+- Shows payment number, amount applied, and remaining balance (if partial)
+- Failed payments show error inline (red) but don't stop the batch
+- After completion, the invoice list in Section 2 auto-refreshes to show updated balances
+
+**Backend endpoint:**
+- `POST /api/tenants/{tenantId}/billing/apply-payments` — Accepts array of `{invoiceId, accountId, amount, paymentMethodId, effectiveDate}`, processes sequentially, returns results array
+
+**Zuora API flow per payment:**
+1. Look up account's default payment method via `query_objects(objectType: "PaymentMethods", filter: ["accountid.EQ:{accountId}", "isdefault.EQ:true"])`
+2. Create payment via `POST /v1/payments`:
+   ```json
+   {
+     "AccountId": "<account-id>",
+     "Amount": <pay-amount>,
+     "Currency": "USD",
+     "EffectiveDate": "<payment-date>",
+     "PaymentMethodId": "<default-payment-method-id>",
+     "Type": "Electronic",
+     "InvoiceId": "<invoice-id>"
+   }
+   ```
+   Or for Invoice Settlement tenants, use the `invoices` array in the payment body.
+3. Return payment number + status
+
+---
+
+### Dashboard Integration
+
+Add a **Billing** button to each tenant card on the dashboard (between Chat and Configure):
+
+```
+[ Run now ▶ ]  [ Backfill 📅 ]  [ Chat 💬 ]  [ Billing 💳 ]  [ Configure ⚙ ]  [ Edit ✏ ]  [ Delete 🗑 ]
+```
+
+---
+
+### Write-Off Tab (future enhancement)
+
+The billing page could later add a second tab for write-offs:
+- Show invoices with small balances or old aging (60+ days)
+- Select invoices to write off
+- Create credit memos and apply them in one click
+- For now, write-offs remain in the automated skill run (Part A)
+
+---
+
+## Updated Implementation Plan
+
+### Phase 1: Backend — Zuora API Layer (Day 1)
+
+New module: `backend/app/billing.py` — direct Zuora REST API calls using `httpx` with OAuth.
+
+1. `create_bill_run(tenant, target_date)` — `POST /v1/object/bill-run`
+2. `get_bill_run_status(tenant, bill_run_id)` — `GET /v1/object/bill-run/{id}`
+3. `get_open_invoices(tenant)` — `query_objects` via MCP or direct REST query
+4. `apply_payment(tenant, invoice_id, account_id, amount, effective_date)` — `POST /v1/payments`
+5. `create_credit_memo(tenant, invoice_id, reason_code)` — `POST /v1/creditmemos` + apply
+
+Also add to `zuora_helpers.py`:
+- `apply-payment` subcommand (for skill runs)
+- `create-credit-memo` subcommand (for skill runs)
+
+### Phase 2: Billing API Routes (Day 2)
+
+New routes in `backend/app/routers/api/core.py`:
+
+| Method | Route | Description |
+|--------|-------|-------------|
+| `POST` | `/api/tenants/{id}/billing/run` | Trigger ad-hoc bill run |
+| `GET` | `/api/tenants/{id}/billing/run-status/{billRunId}` | Poll bill run status |
+| `GET` | `/api/tenants/{id}/billing/open-invoices` | Fetch open invoices |
+| `POST` | `/api/tenants/{id}/billing/apply-payments` | Apply payments to selected invoices |
+
+### Phase 3: Billing Page UI (Day 2-3)
+
+New page: `frontend/src/pages/BillingPage.tsx`
+
+1. Section 1 — Bill Run card (target date picker, run button, status polling)
+2. Section 2 — Open Invoices table (checkbox selection, sortable, searchable)
+3. Section 3 — Apply Payments panel (editable amounts, payment date, submit + results)
+4. Add route `/tenants/:tenantId/billing` to App.tsx
+5. Add Billing button to DashboardPage tenant cards
+
+### Phase 4: Skill Integration — SKILL.md (Day 3)
+
+1. Add STEP 3e (automated payments) and STEP 3f (write-offs) to SKILL.md
 2. Update STEP 4 (report) with new sections
-3. Add backfill-aware date handling (payments should use backfill date + lag, not today)
+3. Add backfill-aware date handling (payments use backfill date + lag, not today)
 
-### Phase 3: Config — Tenant Configuration (Day 2)
+### Phase 5: Config (Day 4)
 
-1. Add `payments` and `writeoffs` sections to config schema
+1. Add `payments` and `writeoffs` sections to tenant config schema
 2. Add default values in `seed_default_config()`
 3. Add validation rules
 4. Update `to_prompt_markdown()` to serialize the new config sections
-5. Update config editor UI with new section
+5. Update config editor UI with new "Payments & Write-offs" section
 
-### Phase 4: Test & Deploy (Day 2)
+### Phase 6: Test & Deploy (Day 4-5)
 
-1. Run locally against a sandbox with existing invoices
-2. Verify payments show up in Zuora UI (Billing > Payments)
-3. Verify credit memos show up and invoices are zeroed out
-4. Deploy to Fly.io
+1. Test billing page locally against a sandbox
+2. Verify bill run creates invoices in Zuora
+3. Verify payments show up in Zuora UI (Billing > Payments)
+4. Test partial payments and edge cases
+5. Run skill with automated payments/write-offs enabled
+6. Deploy to Fly.io
 
 ---
 
@@ -250,18 +449,25 @@ Returns: `{"success": true, "credit_memo_number": "CM00000005", "amount": 89.50,
 
 | Risk | Mitigation |
 |------|-----------|
-| No posted invoices exist yet (new tenant) | Skip payments/write-offs gracefully, note in report |
-| Account has no default payment method | Skip that invoice, log warning |
+| No posted invoices exist yet (new tenant) | Skip payments/write-offs gracefully, note in report; billing page shows empty state |
+| Account has no default payment method | Skip that invoice in automation; show warning icon in billing UI |
 | Invoice Settlement not enabled on tenant | Detect via API response; fall back to legacy payment flow |
 | Credit memo reason code doesn't exist in tenant | Use a safe default or skip; log the error |
 | Backfill runs: payment dates must be backdated | Use backfill date + lag days, not today |
 | Write-off cadence tracking across runs | Use run count modulo 2, or add a tenant-level counter |
-| Payment gateway rejects test card in certain sandboxes | Catch gateway errors, skip gracefully |
+| Payment gateway rejects test card in certain sandboxes | Catch gateway errors, skip gracefully; show error inline in billing UI |
+| Bill run takes a long time on large tenants | Poll with timeout (5 min max); show elapsed time in UI |
+| Bill run fails (no billable charges) | Handle Zuora error response gracefully; show "No charges to bill" message |
+| Partial payment leaves small remaining balance | Show remaining balance in results; don't auto-write-off from the UI |
+| User navigates away during bill run | Bill run continues in Zuora regardless; status resumes on return |
+| Concurrent bill runs on same tenant | Zuora rejects concurrent bill runs; disable button while one is in progress |
+| OAuth token expires during long invoice list | Auto-refresh token in httpx client; retry on 401 |
 
 ---
 
 ## Success Criteria
 
+### Part A — Automated (Skill Runs)
 - [ ] Running the skill on a tenant with posted invoices results in 60-80% of them being paid
 - [ ] Every other run produces 1-2 credit memo write-offs on old/small invoices
 - [ ] Payment and write-off activity appears correctly in Zuora UI
@@ -269,3 +475,19 @@ Returns: `{"success": true, "credit_memo_number": "CM00000005", "amount": 89.50,
 - [ ] The run report includes payment and write-off sections
 - [ ] Config editor has a working Payments & Write-offs section
 - [ ] Backfill runs correctly backdate payment and write-off timestamps
+
+### Part B — Interactive (Billing Page)
+- [ ] Billing page loads at `/tenants/{id}/billing` with three workflow sections
+- [ ] Bill Run: clicking "Run Billing" triggers a real bill run in Zuora, polls for completion, shows invoice count
+- [ ] Open Invoices: table loads all posted invoices with balance > 0, with correct aging calculation
+- [ ] Open Invoices: table is sortable by date, amount, balance, age
+- [ ] Open Invoices: search/filter works by account name or invoice number
+- [ ] Open Invoices: checkbox selection with Select All / Deselect All and running total
+- [ ] Apply Payments: selected invoices appear with editable amount fields defaulting to full balance
+- [ ] Apply Payments: partial amounts accepted (validated > 0 and <= balance)
+- [ ] Apply Payments: [Full] button resets amount to full balance
+- [ ] Apply Payments: shared payment date picker defaults to today
+- [ ] Apply Payments: clicking "Apply Payments" processes sequentially, streams results
+- [ ] Apply Payments: failed payments show error inline but don't stop the batch
+- [ ] Apply Payments: invoice list auto-refreshes after all payments complete
+- [ ] Billing button appears on dashboard tenant cards
