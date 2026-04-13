@@ -165,6 +165,10 @@ class TenantConfig(Base):
     # --- name pool ---
     name_pool: Mapped[dict] = mapped_column(JSON, default=dict)
 
+    # --- currency mix ---
+    currency_mix: Mapped[dict] = mapped_column(JSON, default=dict)
+    # Example: {"USD": 60, "EUR": 25, "GBP": 15} — percentages must sum to 100
+
     # --- payments & write-offs ---
     payments: Mapped[dict] = mapped_column(JSON, default=dict)
     # Example: {"enabled": true, "pay_percentage_min": 60, "pay_percentage_max": 80, "payment_lag_days_min": 1, "payment_lag_days_max": 5}

@@ -170,6 +170,7 @@ def _envelope(tenant: Tenant, cfg: TenantConfig) -> TenantConfigEnvelopeOut:
                 "amendment_mix": cfg.amendment_mix or {},
                 "growth_bias_bp": cfg.growth_bias_bp,
                 "name_pool": cfg.name_pool or {"prefixes": [], "suffixes": []},
+                "currency_mix": cfg.currency_mix or {},
                 "payments": cfg.payments or {},
                 "writeoffs": cfg.writeoffs or {},
             }
@@ -360,6 +361,7 @@ def save_config(
     cfg.amendment_mix = {str(k): int(v) for k, v in body.amendment_mix.items()}
     cfg.growth_bias_bp = body.growth_bias_bp
     cfg.name_pool = body.name_pool.model_dump()
+    cfg.currency_mix = {str(k): int(v) for k, v in body.currency_mix.items()}
     cfg.payments = body.payments
     cfg.writeoffs = body.writeoffs
     db.commit()

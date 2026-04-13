@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, inspect, text
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 
 from app.config import settings
@@ -29,12 +29,38 @@ engine = create_engine(
 SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False, expire_on_commit=False)
 
 
+def _ensure_columns() -> None:
+    """Add any columns defined in models but missing from the live DB.
+
+    SQLAlchemy's create_all() won't ALTER existing tables, so new columns
+    added to models.py need a manual migration. This helper introspects
+    the DB and issues ALTER TABLE … ADD COLUMN for anything missing.
+    Safe to call repeatedly — it's a no-op once the columns exist.
+    """
+    insp = inspect(engine)
+    meta = Base.metadata
+    with engine.begin() as conn:
+        for table_name, table in meta.tables.items():
+            if not insp.has_table(table_name):
+                continue  # create_all will handle brand-new tables
+            existing = {c["name"] for c in insp.get_columns(table_name)}
+            for col in table.columns:
+                if col.name not in existing:
+                    # Build a minimal ALTER TABLE. JSON columns get '{}' or '[]'
+                    # as default; scalars get their server_default or NULL.
+                    col_type = col.type.compile(engine.dialect)
+                    default = "'{}'"  # safe default for JSON columns
+                    stmt = f'ALTER TABLE {table_name} ADD COLUMN {col.name} {col_type} DEFAULT {default}'
+                    conn.execute(text(stmt))
+
+
 def init_db() -> None:
     """Create tables if they don't exist. Called at app startup."""
     # Import models so they register with Base.metadata before create_all runs.
     from app import models  # noqa: F401
 
     Base.metadata.create_all(bind=engine)
+    _ensure_columns()
 
 
 def get_db() -> Iterator[Session]:

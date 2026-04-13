@@ -62,6 +62,7 @@ export interface TenantConfig {
   amendment_mix: Record<string, number>;
   growth_bias_bp: number;
   name_pool: NamePool;
+  currency_mix: Record<string, number>;
   payments: {
     enabled: boolean;
     pay_percentage_min: number;

@@ -130,6 +130,8 @@ DEFAULT_NAME_POOL: dict[str, list[str]] = {
     ],
 }
 
+DEFAULT_CURRENCY_MIX: dict[str, int] = {"USD": 100}
+
 DEFAULT_PAYMENTS: dict = {
     "enabled": True,
     "pay_percentage_min": 60,
@@ -167,6 +169,7 @@ def seed_default_config(tenant_id: int) -> TenantConfig:
         amendment_mix=dict(DEFAULT_AMENDMENT_MIX),
         growth_bias_bp=100,
         name_pool=dict(DEFAULT_NAME_POOL),
+        currency_mix=dict(DEFAULT_CURRENCY_MIX),
         payments=dict(DEFAULT_PAYMENTS),
         writeoffs=dict(DEFAULT_WRITEOFFS),
         created_at=now,
@@ -370,6 +373,28 @@ def validate(config: TenantConfig | None) -> list[ValidationIssue]:
                     )
                 )
 
+    # --- currency mix ---
+    currency_mix = config.currency_mix or {}
+    if currency_mix:
+        total = sum(int(v or 0) for v in currency_mix.values())
+        if total != 100:
+            issues.append(
+                ValidationIssue(
+                    "currency_mix",
+                    "error",
+                    f"Currency mix percentages must sum to 100, got {total}.",
+                )
+            )
+        for k in currency_mix.keys():
+            if not isinstance(k, str) or len(k) != 3:
+                issues.append(
+                    ValidationIssue(
+                        "currency_mix",
+                        "warning",
+                        f"Currency code '{k}' should be a 3-letter ISO code (e.g. USD, EUR, GBP).",
+                    )
+                )
+
     # --- name pool ---
     pool = config.name_pool or {}
     if not pool.get("prefixes") or not pool.get("suffixes"):
@@ -546,6 +571,21 @@ def to_prompt_markdown(tenant_name: str, config: TenantConfig) -> str:
         )
     else:
         lines.append("*(use realistic tech-industry names of your choice)*")
+    lines.append("")
+
+    # Currency mix
+    currency_mix = config.currency_mix or {}
+    lines.append("### Currency distribution for new accounts")
+    if currency_mix:
+        for ccy, pct in sorted(currency_mix.items()):
+            lines.append(f"- {ccy}: {pct}%")
+        lines.append(
+            "- When creating a new account, randomly assign a currency based on "
+            "these percentages. Use the selected currency in the `newAccountJson` "
+            '`"currency"` field instead of always using USD.'
+        )
+    else:
+        lines.append("- **USD only** (default — all new accounts use USD)")
     lines.append("")
 
     # Payments

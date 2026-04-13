@@ -18,6 +18,7 @@ The USER PROMPT for this run contains a `## Tenant configuration for <name>` sec
 - Tier mix and amendment mix percentages
 - Growth bias multiplier
 - Company name pool for new accounts
+- Currency distribution for new accounts (currency_mix)
 
 **If you see a product rate plan ID, subscription number, volume range, or percentage inside this SKILL.md file, it is a REFERENCE ONLY and applies to exactly one sandbox.** Never use those values in place of what the prompt tells you. If any catalog ID from SKILL.md appears in your tool call inputs when the prompt provided a different value for the same thing, you are doing it wrong — stop and re-read the prompt's configuration section.
 
@@ -101,6 +102,8 @@ Pull the volume ranges, tier mix, amendment mix, and growth bias from the prompt
 
 ### 3a. New Subscriptions (via MCP `create_subscriptions`)
 
+**Currency selection:** The tenant config includes a `currency_mix` section (e.g. `{"USD": 70, "EUR": 20, "GBP": 10}`) that defines the percentage distribution of currencies for new accounts. For each new subscription, randomly pick a currency according to these weights and use it as the account's `currency` field below. If no currency_mix is configured, default to `"USD"`.
+
 **CRITICAL — tested and verified payload pattern:**
 
 ```
@@ -109,7 +112,7 @@ create_subscriptions(
   orderDate: "<today YYYY-MM-DD>",
   newAccountJson: "{
     \"name\": \"<Company Name>\",
-    \"currency\": \"USD\",
+    \"currency\": \"<currency from currency_mix>\",
     \"billCycleDay\": <1-28 random>,
     \"billToContact\": {
       \"firstName\": \"<First>\",

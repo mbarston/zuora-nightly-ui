@@ -605,6 +605,87 @@ export function TenantConfigPage() {
         </CardContent>
       </Card>
 
+      {/* Currency mix */}
+      <Card>
+        <CardHeader>
+          <CardTitle>Currency distribution</CardTitle>
+          <p className="text-xs text-muted-foreground">
+            Distribution of currencies for new accounts. Percentages must sum to 100.
+            Use 3-letter ISO codes (USD, EUR, GBP, JPY, etc.).
+          </p>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          {Object.entries(cfg.currency_mix ?? {}).map(([code, pct]) => (
+            <div key={code} className="flex items-center gap-2">
+              <Input
+                value={code}
+                className="max-w-[5rem] font-mono uppercase"
+                onChange={(e) => {
+                  const newMix = { ...cfg.currency_mix };
+                  delete newMix[code];
+                  newMix[e.target.value.toUpperCase()] = pct;
+                  upd({ currency_mix: newMix });
+                }}
+              />
+              <Input
+                type="number"
+                min={0}
+                max={100}
+                value={pct}
+                className="max-w-[5rem]"
+                onChange={(e) =>
+                  upd({
+                    currency_mix: {
+                      ...cfg.currency_mix,
+                      [code]: Number(e.target.value),
+                    },
+                  })
+                }
+              />
+              <span className="text-xs text-muted-foreground">%</span>
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-7 text-xs text-red-400"
+                onClick={() => {
+                  const newMix = { ...cfg.currency_mix };
+                  delete newMix[code];
+                  upd({ currency_mix: newMix });
+                }}
+              >
+                Remove
+              </Button>
+            </div>
+          ))}
+          <div className="flex items-center gap-3">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => {
+                const existing = Object.keys(cfg.currency_mix ?? {});
+                const next = ["USD", "EUR", "GBP", "JPY", "AUD", "CAD"].find(
+                  (c) => !existing.includes(c)
+                ) || "XXX";
+                upd({
+                  currency_mix: {
+                    ...cfg.currency_mix,
+                    [next]: 0,
+                  },
+                });
+              }}
+            >
+              + Add currency
+            </Button>
+            <p className="text-xs text-muted-foreground">
+              Sum: {Object.values(cfg.currency_mix ?? {}).reduce((a, b) => a + b, 0)}
+              {Object.values(cfg.currency_mix ?? {}).reduce((a, b) => a + b, 0) !== 100 && (
+                <span className="ml-1 text-red-400">(must be 100)</span>
+              )}
+            </p>
+          </div>
+        </CardContent>
+      </Card>
+
       {/* Payments & Write-offs */}
       <Card>
         <CardHeader>
