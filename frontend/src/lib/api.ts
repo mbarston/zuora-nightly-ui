@@ -124,6 +124,10 @@ export const api = {
     req<CatalogImportPreview>(`/api/tenants/${tenantId}/config/import-preview`, {
       method: "POST",
     }),
+  importCurrencies: (tenantId: number) =>
+    req<{ currencies: Record<string, string[]> }>(`/api/tenants/${tenantId}/config/import-currencies`, {
+      method: "POST",
+    }),
 
   // --- Runs ---
   startRun: (tenantId: number) =>

@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useParams } from "react-router-dom";
-import { ArrowLeft, Download, Plus, Trash2 } from "lucide-react";
+import { ArrowLeft, Download, Loader2, Plus, Trash2 } from "lucide-react";
 import { api, ApiError } from "@/lib/api";
 import type {
   Addon,
@@ -606,85 +606,11 @@ export function TenantConfigPage() {
       </Card>
 
       {/* Currency mix */}
-      <Card>
-        <CardHeader>
-          <CardTitle>Currency distribution</CardTitle>
-          <p className="text-xs text-muted-foreground">
-            Distribution of currencies for new accounts. Percentages must sum to 100.
-            Use 3-letter ISO codes (USD, EUR, GBP, JPY, etc.).
-          </p>
-        </CardHeader>
-        <CardContent className="space-y-3">
-          {Object.entries(cfg.currency_mix ?? {}).map(([code, pct]) => (
-            <div key={code} className="flex items-center gap-2">
-              <Input
-                value={code}
-                className="max-w-[5rem] font-mono uppercase"
-                onChange={(e) => {
-                  const newMix = { ...cfg.currency_mix };
-                  delete newMix[code];
-                  newMix[e.target.value.toUpperCase()] = pct;
-                  upd({ currency_mix: newMix });
-                }}
-              />
-              <Input
-                type="number"
-                min={0}
-                max={100}
-                value={pct}
-                className="max-w-[5rem]"
-                onChange={(e) =>
-                  upd({
-                    currency_mix: {
-                      ...cfg.currency_mix,
-                      [code]: Number(e.target.value),
-                    },
-                  })
-                }
-              />
-              <span className="text-xs text-muted-foreground">%</span>
-              <Button
-                variant="ghost"
-                size="sm"
-                className="h-7 text-xs text-red-400"
-                onClick={() => {
-                  const newMix = { ...cfg.currency_mix };
-                  delete newMix[code];
-                  upd({ currency_mix: newMix });
-                }}
-              >
-                Remove
-              </Button>
-            </div>
-          ))}
-          <div className="flex items-center gap-3">
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => {
-                const existing = Object.keys(cfg.currency_mix ?? {});
-                const next = ["USD", "EUR", "GBP", "JPY", "AUD", "CAD"].find(
-                  (c) => !existing.includes(c)
-                ) || "XXX";
-                upd({
-                  currency_mix: {
-                    ...cfg.currency_mix,
-                    [next]: 0,
-                  },
-                });
-              }}
-            >
-              + Add currency
-            </Button>
-            <p className="text-xs text-muted-foreground">
-              Sum: {Object.values(cfg.currency_mix ?? {}).reduce((a, b) => a + b, 0)}
-              {Object.values(cfg.currency_mix ?? {}).reduce((a, b) => a + b, 0) !== 100 && (
-                <span className="ml-1 text-red-400">(must be 100)</span>
-              )}
-            </p>
-          </div>
-        </CardContent>
-      </Card>
+      <CurrencyMixCard
+        tenantId={tenantId}
+        currencyMix={cfg.currency_mix ?? {}}
+        onChange={(mix) => upd({ currency_mix: mix })}
+      />
 
       {/* Payments & Write-offs */}
       <Card>
@@ -902,5 +828,207 @@ function VolumeRow({
         />
       </div>
     </div>
+  );
+}
+
+function CurrencyMixCard({
+  tenantId,
+  currencyMix,
+  onChange,
+}: {
+  tenantId: number;
+  currencyMix: Record<string, number>;
+  onChange: (mix: Record<string, number>) => void;
+}) {
+  // Imported currencies from Zuora: { "USD": ["Basic — Annual", ...], "EUR": [...] }
+  const [importedCurrencies, setImportedCurrencies] = useState<Record<string, string[]> | null>(null);
+  const [expandedCurrency, setExpandedCurrency] = useState<string | null>(null);
+
+  const importMut = useMutation({
+    mutationFn: () => api.importCurrencies(tenantId),
+    onSuccess: (data) => {
+      setImportedCurrencies(data.currencies);
+      // Auto-populate any currencies that aren't already in the mix
+      const existing = Object.keys(currencyMix);
+      const allCurrencies = Object.keys(data.currencies);
+      if (existing.length === 0 && allCurrencies.length > 0) {
+        // No currencies configured yet — distribute evenly
+        const pct = Math.floor(100 / allCurrencies.length);
+        const remainder = 100 - pct * allCurrencies.length;
+        const newMix: Record<string, number> = {};
+        allCurrencies.forEach((c, i) => {
+          newMix[c] = pct + (i === 0 ? remainder : 0);
+        });
+        onChange(newMix);
+      }
+    },
+  });
+
+  const sum = Object.values(currencyMix).reduce((a, b) => a + b, 0);
+
+  return (
+    <Card>
+      <CardHeader>
+        <div className="flex items-center justify-between">
+          <div>
+            <CardTitle>Currency distribution</CardTitle>
+            <p className="text-xs text-muted-foreground">
+              Distribution of currencies for new accounts. Percentages must sum to 100.
+            </p>
+          </div>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => importMut.mutate()}
+            disabled={importMut.isPending}
+          >
+            {importMut.isPending ? (
+              <>
+                <Loader2 className="mr-1 h-4 w-4 animate-spin" />
+                Importing…
+              </>
+            ) : (
+              <>
+                <Download className="mr-1 h-4 w-4" />
+                Import from Zuora
+              </>
+            )}
+          </Button>
+        </div>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        {importMut.isError && (
+          <div className="rounded-md border border-destructive/50 bg-destructive/10 p-3 text-sm text-destructive">
+            Import failed: {(importMut.error as Error).message}
+          </div>
+        )}
+
+        {Object.entries(currencyMix).map(([code, pct]) => {
+          const ratePlans = importedCurrencies?.[code];
+          const isExpanded = expandedCurrency === code;
+
+          return (
+            <div key={code} className="space-y-1">
+              <div className="flex items-center gap-2">
+                <Input
+                  value={code}
+                  className="max-w-[5rem] font-mono uppercase"
+                  onChange={(e) => {
+                    const newMix = { ...currencyMix };
+                    delete newMix[code];
+                    newMix[e.target.value.toUpperCase()] = pct;
+                    onChange(newMix);
+                  }}
+                />
+                <Input
+                  type="number"
+                  min={0}
+                  max={100}
+                  value={pct}
+                  className="max-w-[5rem]"
+                  onChange={(e) =>
+                    onChange({
+                      ...currencyMix,
+                      [code]: Number(e.target.value),
+                    })
+                  }
+                />
+                <span className="text-xs text-muted-foreground">%</span>
+                {ratePlans && (
+                  <button
+                    type="button"
+                    onClick={() => setExpandedCurrency(isExpanded ? null : code)}
+                    className="text-xs text-blue-400 hover:underline"
+                  >
+                    {ratePlans.length} rate plan{ratePlans.length !== 1 ? "s" : ""}
+                  </button>
+                )}
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="ml-auto h-7 text-xs text-red-400"
+                  onClick={() => {
+                    const newMix = { ...currencyMix };
+                    delete newMix[code];
+                    onChange(newMix);
+                  }}
+                >
+                  Remove
+                </Button>
+              </div>
+              {isExpanded && ratePlans && (
+                <div className="ml-2 rounded-md border bg-muted/30 p-2">
+                  <p className="mb-1 text-[0.65rem] font-semibold uppercase tracking-wide text-muted-foreground">
+                    Rate plans with {code} pricing
+                  </p>
+                  <ul className="space-y-0.5 text-xs text-muted-foreground">
+                    {ratePlans.map((rp, i) => (
+                      <li key={i}>• {rp}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+            </div>
+          );
+        })}
+
+        <div className="flex items-center gap-3">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => {
+              const existing = Object.keys(currencyMix);
+              const suggestions = importedCurrencies
+                ? Object.keys(importedCurrencies).filter((c) => !existing.includes(c))
+                : ["USD", "EUR", "GBP", "JPY", "AUD", "CAD"].filter(
+                    (c) => !existing.includes(c)
+                  );
+              const next = suggestions[0] || "XXX";
+              onChange({ ...currencyMix, [next]: 0 });
+            }}
+          >
+            <Plus className="mr-1 h-3 w-3" />
+            Add currency
+          </Button>
+          <p className="text-xs text-muted-foreground">
+            Sum: {sum}
+            {sum !== 100 && (
+              <span className="ml-1 text-red-400">(must be 100)</span>
+            )}
+          </p>
+        </div>
+
+        {importedCurrencies && (
+          <div className="rounded-md border bg-muted/20 p-2">
+            <p className="text-xs text-muted-foreground">
+              <span className="font-semibold">{Object.keys(importedCurrencies).length}</span> currencies
+              found in Zuora catalog:{" "}
+              <span className="font-mono">
+                {Object.keys(importedCurrencies).join(", ")}
+              </span>
+              {Object.keys(importedCurrencies).some((c) => !(c in currencyMix)) && (
+                <Button
+                  variant="link"
+                  size="sm"
+                  className="ml-1 h-auto p-0 text-xs text-blue-400"
+                  onClick={() => {
+                    const allCurrencies = Object.keys(importedCurrencies);
+                    const pct = Math.floor(100 / allCurrencies.length);
+                    const remainder = 100 - pct * allCurrencies.length;
+                    const newMix: Record<string, number> = {};
+                    allCurrencies.forEach((c, i) => {
+                      newMix[c] = pct + (i === 0 ? remainder : 0);
+                    });
+                    onChange(newMix);
+                  }}
+                >
+                  Use all (distribute evenly)
+                </Button>
+              )}
+            </p>
+          </div>
+        )}
+      </CardContent>
+    </Card>
   );
 }

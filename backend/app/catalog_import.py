@@ -253,6 +253,38 @@ def classify(products_raw: list[dict]) -> ImportPreview:
     )
 
 
+def extract_currencies(products_raw: list[dict]) -> dict[str, list[str]]:
+    """Extract all currencies from the catalog, grouped by product rate plan.
+
+    Returns a dict of ``{currency_code: [rate_plan_label, ...]}`` so the
+    frontend can show which plans support each currency. Currencies are
+    discovered from the ``pricing`` array on each ProductRatePlanCharge.
+    """
+    currency_plans: dict[str, set[str]] = {}
+
+    for prod in products_raw:
+        prod_name = prod.get("name") or "(unnamed)"
+        for rp in prod.get("productRatePlans") or []:
+            rp_name = rp.get("name") or ""
+            label = f"{prod_name} — {rp_name}" if rp_name else prod_name
+            for charge in rp.get("productRatePlanCharges") or []:
+                for tier in charge.get("pricing") or []:
+                    cur = tier.get("currency")
+                    if cur:
+                        currency_plans.setdefault(cur, set()).add(label)
+
+    return {k: sorted(v) for k, v in sorted(currency_plans.items())}
+
+
+async def import_currencies(
+    base_url: str, client_id: str, client_secret: str
+) -> dict[str, list[str]]:
+    """One-shot: OAuth + products fetch + extract currencies per rate plan."""
+    token = await fetch_token(base_url, client_id, client_secret)
+    products_raw = await fetch_products(base_url, token)
+    return extract_currencies(products_raw)
+
+
 async def import_catalog(
     base_url: str, client_id: str, client_secret: str
 ) -> ImportPreview:

@@ -32,6 +32,7 @@ from app.backfill import (
 )
 from app.catalog_import import CatalogImportError
 from app.catalog_import import import_catalog as run_catalog_import
+from app.catalog_import import import_currencies as run_currency_import
 from app.config import settings
 from app.crypto import decrypt, encrypt
 from app.db import SessionLocal, get_db
@@ -397,6 +398,36 @@ async def import_preview(
     except CatalogImportError as e:
         raise HTTPException(status_code=502, detail=str(e)) from e
     return preview.to_dict()
+
+
+@router.post("/tenants/{tenant_id}/config/import-currencies")
+async def import_currencies(
+    tenant_id: int,
+    db: Session = Depends(get_db),
+    user: User = Depends(require_api_user),
+):
+    """
+    Fetch all currencies defined in the tenant's Zuora product catalog.
+
+    Returns ``{currencies: {CODE: [rate_plan_labels...]}}`` — e.g.
+    ``{"USD": ["Basic — Annual", ...], "EUR": [...]}``
+    so the frontend can show which rate plans support each currency
+    and let the user configure the currency_mix.
+    """
+    tenant = _owned_tenant(db, user, tenant_id)
+    try:
+        client_secret = decrypt(tenant.client_secret_encrypted)
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(status_code=500, detail=f"Decrypt failed: {e}") from e
+    try:
+        currencies = await run_currency_import(
+            base_url=tenant.base_url,
+            client_id=tenant.client_id,
+            client_secret=client_secret,
+        )
+    except CatalogImportError as e:
+        raise HTTPException(status_code=502, detail=str(e)) from e
+    return {"currencies": currencies}
 
 
 # ---------------------------------------------------------------------------
