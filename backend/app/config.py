@@ -59,6 +59,12 @@ class Settings(BaseSettings):
     # --- Claude (wired in Phase 2) ---
     ANTHROPIC_API_KEY: str = ""
 
+    # Model used by the Claude Agent SDK for both nightly/backfill runs and
+    # the chat assistant. Accepts SDK aliases ("sonnet", "opus", "haiku") or
+    # full model IDs. Default is Sonnet for cost stability; override per-env
+    # via CLAUDE_MODEL if a specific deployment needs Opus.
+    CLAUDE_MODEL: str = "sonnet"
+
 
 @lru_cache(maxsize=1)
 def get_settings() -> Settings:

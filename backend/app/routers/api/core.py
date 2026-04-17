@@ -1012,6 +1012,7 @@ async def tenant_chat(
 
     options = ClaudeAgentOptions(
         cwd=str(SKILL_WORKDIR),
+        model=settings.CLAUDE_MODEL,
         system_prompt=system_prompt if body.is_new else None,
         **session_kwargs,
         env={

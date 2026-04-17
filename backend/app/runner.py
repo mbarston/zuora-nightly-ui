@@ -375,6 +375,7 @@ async def _execute_run(run_id: int) -> None:
 
     options = ClaudeAgentOptions(
         cwd=str(SKILL_WORKDIR),
+        model=settings.CLAUDE_MODEL,
         env={
             **tenant_env,
             # Inherit the shared Anthropic key from the backend's env.
