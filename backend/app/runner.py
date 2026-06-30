@@ -26,6 +26,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import traceback
+from calendar import monthrange
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -133,54 +134,79 @@ def _backfill_window_markdown(backfill_date: datetime) -> str:
     Build the "## Backfill window" section that gets appended to the run
     prompt when this run is part of a historical backfill.
 
-    The skill normally picks today's date for every Zuora operation. For
-    backfill batches we tell it to pretend a different date is "today"
-    and push that date through every field that accepts a timestamp:
+    Each backfill batch represents an ENTIRE calendar month. We tell the
+    skill to generate a full month of activity — as if the daily job had run
+    every day that month — by (a) scaling every volume target up by the
+    number of days in the month and (b) spreading each operation's timestamp
+    randomly across the days of that month, rather than clustering everything
+    on a single date. Every field that accepts a timestamp is backdated into
+    the month window:
       - create_subscriptions: orderDate + the initial term's start date
       - Amendments: contractEffectiveDate + all three triggerDates
       - cancel_subscriptions: orderDate + cancellationEffectiveDate
       - Usage posts: StartDateTime (with a realistic time-of-day)
     """
-    date_str = backfill_date.strftime("%Y-%m-%d")
+    year, month = backfill_date.year, backfill_date.month
+    days_in_month = monthrange(year, month)[1]
+    first_str = backfill_date.strftime("%Y-%m-01")
+    last_str = backfill_date.strftime(f"%Y-%m-{days_in_month:02d}")
+    month_label = backfill_date.strftime("%B %Y")
     return (
         "## Backfill window\n"
         "\n"
-        f"**IMPORTANT**: This is a historical backfill run. Pretend the "
-        f"current date is **{date_str}** for every Zuora operation in this "
-        "run. Every timestamp you pass to Zuora must land on or near that "
-        "date, NOT today's real calendar date.\n"
+        f"**IMPORTANT**: This is a historical backfill run covering the entire "
+        f"month of **{month_label}** ({first_str} through {last_str}, "
+        f"{days_in_month} days). Generate a FULL MONTH of activity as if the "
+        "daily job had run on every day of this month. Never use today's real "
+        "calendar date — every timestamp must land inside this month window.\n"
         "\n"
-        "Concrete rules:\n"
+        "### Volume — scale to a full month\n"
         "\n"
-        f"1. **New subscriptions** (`create_subscriptions`): set `orderDate` "
-        f"to `{date_str}` and leave the initial term's start date to derive "
-        "from that (the skill's usual per-tenant-config logic still applies).\n"
-        f"2. **Amendments** (`add-product`, `remove-product`, `change-plan`, "
-        f"`update-product`): when calling `zuora_helpers.py`, the helper uses "
-        f"today's date internally. For backfill runs you MUST instead call "
-        f"the underlying Zuora SDK / MCP tool directly so you can pass "
-        f"`contractEffectiveDate={date_str}` and all three trigger dates "
-        f"(`ContractEffective`, `ServiceActivation`, `CustomerAcceptance`) "
-        f"set to `{date_str}`. Do not use the helper's shortcut commands for "
-        f"this run.\n"
-        f"3. **Cancellations** (`cancel_subscriptions`): set both `orderDate` "
-        f"and `cancellationEffectiveDate` to `{date_str}`. Use "
-        f"`cancellationPolicy: \"SpecificDate\"` because the default "
-        f"`EndOfCurrentTerm` will resolve to a future date that breaks the "
-        f"historical narrative.\n"
-        f"4. **Usage posts** (`post-usage`): pass `--start-date "
-        f"{date_str}T10:00:00.000+00:00` (or any mid-day time) to "
-        f"`zuora_helpers.py post-usage`. Don't let it default to `now`.\n"
+        f"The volume targets in the tenant config section above are **per-day** "
+        f"figures. Because this single run represents all {days_in_month} days "
+        f"of {month_label}, multiply every volume target by **~{days_in_month}**:\n"
         "\n"
-        "Volume targets and mix percentages from the tenant config section "
-        "above still apply exactly — a backfill batch should produce the "
-        "same number of actions as a normal daily run, just backdated. The "
-        "skill's data-story rules (growth outpacing churn, tier mix, etc.) "
-        "also still apply to this batch independently.\n"
+        f"- New subscriptions: roughly (config new-subs per day) × {days_in_month}.\n"
+        f"- Amendments: roughly (config amendments per day) × {days_in_month}.\n"
+        f"- Cancellations: roughly (config cancellations per day) × {days_in_month}.\n"
+        f"- Usage posts: roughly (config usage posts per day) × {days_in_month}.\n"
         "\n"
-        "When writing the final report, clearly label it as a backfill "
-        f"batch for {date_str} so it's distinguishable from regular runs "
-        "in history.\n"
+        "Treat each day's count as a fresh draw from the configured min–max "
+        "range (so totals vary naturally day to day), not a flat multiply. The "
+        "mix percentages (tier mix, amendment mix, currency mix) and the "
+        "data-story rules (growth outpacing churn) apply across the whole "
+        "month.\n"
+        "\n"
+        "### Dates — spread across the month\n"
+        "\n"
+        f"For EACH action, pick an effective date at random within "
+        f"{first_str}…{last_str} (roughly evenly across the days, with natural "
+        "day-to-day variation — do not put everything on one day). Then push "
+        "that chosen date through every timestamp field:\n"
+        "\n"
+        "1. **New subscriptions** (`create_subscriptions`): set `orderDate` to "
+        "the chosen in-month date; let the initial term's start derive from it "
+        "(the usual per-tenant-config logic still applies).\n"
+        "2. **Amendments** (`add-product`, `remove-product`, `change-plan`, "
+        "`update-product`): the `zuora_helpers.py` helper uses today's date "
+        "internally, so for backfill you MUST call the underlying Zuora SDK / "
+        "MCP tool directly and pass `contractEffectiveDate=<chosen in-month "
+        "date>` with all three trigger dates (`ContractEffective`, "
+        "`ServiceActivation`, `CustomerAcceptance`) set to the same date. "
+        "Amendments/cancellations should be dated on or after the start date "
+        "of the subscription they act on (and still within this month).\n"
+        "3. **Cancellations** (`cancel_subscriptions`): set both `orderDate` "
+        "and `cancellationEffectiveDate` to the chosen in-month date, with "
+        "`cancellationPolicy: \"SpecificDate\"` (the default "
+        "`EndOfCurrentTerm` resolves to a future date and breaks the "
+        "historical narrative).\n"
+        "4. **Usage posts** (`post-usage`): pass `--start-date "
+        "<chosen in-month date>T<HH:MM>:00.000+00:00` with a realistic mid-day "
+        "time. Don't let it default to `now`.\n"
+        "\n"
+        "When writing the final report, clearly label it as a backfill batch "
+        f"for {month_label} and note the approximate per-category totals so "
+        "it's distinguishable from regular daily runs in history.\n"
     )
 
 
