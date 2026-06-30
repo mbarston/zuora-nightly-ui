@@ -46,10 +46,21 @@ def _ensure_columns() -> None:
             existing = {c["name"] for c in insp.get_columns(table_name)}
             for col in table.columns:
                 if col.name not in existing:
-                    # Build a minimal ALTER TABLE. JSON columns get '{}' or '[]'
-                    # as default; scalars get their server_default or NULL.
+                    # Build a minimal ALTER TABLE so existing rows backfill to a
+                    # valid value. Honor a scalar python-side default (str/num/
+                    # bool) when present — otherwise fall back to '{}', which is
+                    # the right shape for our JSON columns (default=dict/list).
                     col_type = col.type.compile(engine.dialect)
-                    default = "'{}'"  # safe default for JSON columns
+                    default = "'{}'"
+                    col_default = col.default
+                    if col_default is not None and getattr(col_default, "is_scalar", False):
+                        arg = col_default.arg
+                        if isinstance(arg, bool):
+                            default = "1" if arg else "0"
+                        elif isinstance(arg, (int, float)):
+                            default = str(arg)
+                        elif isinstance(arg, str):
+                            default = "'" + arg.replace("'", "''") + "'"
                     stmt = f'ALTER TABLE {table_name} ADD COLUMN {col.name} {col_type} DEFAULT {default}'
                     conn.execute(text(stmt))
 

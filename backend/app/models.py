@@ -162,7 +162,12 @@ class TenantConfig(Base):
     # 1.0 = neutral. Stored *100 as an int so SQLite + forms stay simple.
     growth_bias_bp: Mapped[int] = mapped_column(Integer, default=100)  # 100 = 1.0x
 
-    # --- name pool ---
+    # --- account type + name pool ---
+    # "company" (B2B) → name_pool's two lists are company prefixes + suffixes,
+    # combined into "Apex Technologies". "person" (B2C) → the same two lists are
+    # reinterpreted as first names + last names, combined into "John Smith".
+    # The prompt builder branches on this value.
+    account_type: Mapped[str] = mapped_column(String, default="company")
     name_pool: Mapped[dict] = mapped_column(JSON, default=dict)
 
     # --- currency mix ---

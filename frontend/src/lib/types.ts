@@ -61,6 +61,7 @@ export interface TenantConfig {
   tier_mix: Record<string, number>;
   amendment_mix: Record<string, number>;
   growth_bias_bp: number;
+  account_type: "company" | "person";
   name_pool: NamePool;
   currency_mix: Record<string, number>;
   payments: {

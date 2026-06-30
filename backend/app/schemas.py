@@ -101,6 +101,7 @@ class TenantConfigBody(BaseModel):
     tier_mix: dict[str, int] = Field(default_factory=dict)
     amendment_mix: dict[str, int] = Field(default_factory=dict)
     growth_bias_bp: int = 100
+    account_type: Literal["company", "person"] = "company"
     name_pool: NamePoolModel = Field(default_factory=NamePoolModel)
     currency_mix: dict[str, int] = Field(default_factory=dict)
     payments: dict = Field(default_factory=dict)

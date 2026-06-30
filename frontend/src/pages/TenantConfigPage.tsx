@@ -27,6 +27,32 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { CatalogImportModal } from "@/components/tenants/CatalogImportModal";
 import { SchedulesSection } from "@/components/schedules/SchedulesSection";
 
+// Sample name pools used to auto-populate the two lists when switching the
+// account type. In "company" mode the lists are prefix + suffix; in "person"
+// mode they're first name + last name.
+const COMPANY_SAMPLE_POOL = {
+  prefixes: [
+    "Apex", "NovaBridge", "Quantum", "Skyline", "DataVault", "CloudForge",
+    "PulsePoint", "Zenith", "ClearPath", "BlueStar", "MetricWave",
+    "Streamline", "TerraCore", "Ironclad", "BrightLoop", "VectorScale",
+  ],
+  suffixes: [
+    "Technologies", "Software", "Systems", "Dynamics", "Analytics", "Labs",
+    "Platforms", "Networks", "Digital", "AI", "Solutions", "Corp",
+  ],
+};
+
+const PERSON_SAMPLE_POOL = {
+  prefixes: [
+    "James", "Maria", "David", "Sofia", "Michael", "Aisha", "Daniel", "Emma",
+    "Carlos", "Priya", "Liam", "Hannah", "Noah", "Olivia", "Ethan", "Grace",
+  ],
+  suffixes: [
+    "Smith", "Johnson", "Williams", "Garcia", "Brown", "Patel", "Nguyen",
+    "Martinez", "Lee", "Davis", "Rodriguez", "Wilson", "Khan", "Taylor",
+  ],
+};
+
 export function TenantConfigPage() {
   const { tenantId: tenantIdParam } = useParams();
   const tenantId = Number(tenantIdParam);
@@ -566,44 +592,82 @@ export function TenantConfigPage() {
       </Card>
 
       {/* Name pool */}
-      <Card>
-        <CardHeader>
-          <CardTitle>Company name pool</CardTitle>
-          <p className="text-xs text-muted-foreground">
-            Used to generate new account names. Each name = one prefix + one suffix.
-          </p>
-        </CardHeader>
-        <CardContent className="space-y-3">
-          <div>
-            <Label className="text-xs">Prefixes (comma-separated)</Label>
-            <Input
-              value={(cfg.name_pool.prefixes || []).join(", ")}
-              onChange={(e) =>
-                upd({
-                  name_pool: {
-                    ...cfg.name_pool,
-                    prefixes: e.target.value.split(",").map((x) => x.trim()).filter(Boolean),
-                  },
-                })
-              }
-            />
-          </div>
-          <div>
-            <Label className="text-xs">Suffixes (comma-separated)</Label>
-            <Input
-              value={(cfg.name_pool.suffixes || []).join(", ")}
-              onChange={(e) =>
-                upd({
-                  name_pool: {
-                    ...cfg.name_pool,
-                    suffixes: e.target.value.split(",").map((x) => x.trim()).filter(Boolean),
-                  },
-                })
-              }
-            />
-          </div>
-        </CardContent>
-      </Card>
+      {(() => {
+        const isPerson = cfg.account_type === "person";
+        const setMode = (mode: "company" | "person") => {
+          if (mode === cfg.account_type) return;
+          // Auto-swap the two lists to sample names for the new mode.
+          upd({
+            account_type: mode,
+            name_pool:
+              mode === "person"
+                ? { ...PERSON_SAMPLE_POOL }
+                : { ...COMPANY_SAMPLE_POOL },
+          });
+        };
+        const labelA = isPerson ? "First names" : "Prefixes";
+        const labelB = isPerson ? "Last names" : "Suffixes";
+        return (
+          <Card>
+            <CardHeader>
+              <div className="flex items-center justify-between gap-3">
+                <CardTitle>{isPerson ? "Customer name pool" : "Company name pool"}</CardTitle>
+                <div className="flex overflow-hidden rounded-md border text-xs">
+                  {(["company", "person"] as const).map((mode) => (
+                    <button
+                      key={mode}
+                      type="button"
+                      onClick={() => setMode(mode)}
+                      className={
+                        cfg.account_type === mode
+                          ? "bg-primary px-3 py-1 font-medium text-primary-foreground"
+                          : "bg-transparent px-3 py-1 font-medium text-muted-foreground hover:bg-accent/40"
+                      }
+                    >
+                      {mode === "company" ? "B2B · Company" : "B2C · Person"}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <p className="text-xs text-muted-foreground">
+                {isPerson
+                  ? "Accounts are named after individual people. Each name = one first name + one last name (e.g. “John Smith”)."
+                  : "Accounts are named after businesses. Each name = one prefix + one suffix (e.g. “Apex Technologies”)."}
+              </p>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              <div>
+                <Label className="text-xs">{labelA} (comma-separated)</Label>
+                <Input
+                  value={(cfg.name_pool.prefixes || []).join(", ")}
+                  onChange={(e) =>
+                    upd({
+                      name_pool: {
+                        ...cfg.name_pool,
+                        prefixes: e.target.value.split(",").map((x) => x.trim()).filter(Boolean),
+                      },
+                    })
+                  }
+                />
+              </div>
+              <div>
+                <Label className="text-xs">{labelB} (comma-separated)</Label>
+                <Input
+                  value={(cfg.name_pool.suffixes || []).join(", ")}
+                  onChange={(e) =>
+                    upd({
+                      name_pool: {
+                        ...cfg.name_pool,
+                        suffixes: e.target.value.split(",").map((x) => x.trim()).filter(Boolean),
+                      },
+                    })
+                  }
+                />
+              </div>
+            </CardContent>
+          </Card>
+        );
+      })()}
 
       {/* Currency mix */}
       <CurrencyMixCard

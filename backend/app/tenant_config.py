@@ -118,6 +118,8 @@ DEFAULT_AMENDMENT_MIX: dict[str, int] = {
 }
 
 
+DEFAULT_ACCOUNT_TYPE = "company"  # "company" (B2B) | "person" (B2C)
+
 DEFAULT_NAME_POOL: dict[str, list[str]] = {
     "prefixes": [
         "Apex", "NovaBridge", "Quantum", "Skyline", "DataVault", "CloudForge",
@@ -127,6 +129,20 @@ DEFAULT_NAME_POOL: dict[str, list[str]] = {
     "suffixes": [
         "Technologies", "Software", "Systems", "Dynamics", "Analytics",
         "Labs", "Platforms", "Networks", "Digital", "AI", "Solutions", "Corp",
+    ],
+}
+
+# B2C sample pool — the two lists become first names + last names. Surfaced by
+# the UI when a tenant is switched to "person" mode.
+DEFAULT_PERSON_NAME_POOL: dict[str, list[str]] = {
+    "prefixes": [
+        "James", "Maria", "David", "Sofia", "Michael", "Aisha", "Daniel",
+        "Emma", "Carlos", "Priya", "Liam", "Hannah", "Noah", "Olivia",
+        "Ethan", "Grace",
+    ],
+    "suffixes": [
+        "Smith", "Johnson", "Williams", "Garcia", "Brown", "Patel", "Nguyen",
+        "Martinez", "Lee", "Davis", "Rodriguez", "Wilson", "Khan", "Taylor",
     ],
 }
 
@@ -168,6 +184,7 @@ def seed_default_config(tenant_id: int) -> TenantConfig:
         tier_mix=dict(DEFAULT_TIER_MIX),
         amendment_mix=dict(DEFAULT_AMENDMENT_MIX),
         growth_bias_bp=100,
+        account_type=DEFAULT_ACCOUNT_TYPE,
         name_pool=dict(DEFAULT_NAME_POOL),
         currency_mix=dict(DEFAULT_CURRENCY_MIX),
         payments=dict(DEFAULT_PAYMENTS),
@@ -555,22 +572,47 @@ def to_prompt_markdown(tenant_name: str, config: TenantConfig) -> str:
     )
     lines.append("")
 
-    # Name pool
-    lines.append("### Company name pool")
+    # Name pool — interpretation depends on B2B (company) vs B2C (person).
+    is_person = (getattr(config, "account_type", None) or "company") == "person"
     prefixes = (config.name_pool or {}).get("prefixes", [])
     suffixes = (config.name_pool or {}).get("suffixes", [])
-    if prefixes or suffixes:
-        if prefixes:
-            lines.append(f"- **Prefixes:** {', '.join(prefixes)}")
-        if suffixes:
-            lines.append(f"- **Suffixes:** {', '.join(suffixes)}")
+    if is_person:
+        lines.append("### Customer name pool (B2C)")
         lines.append(
-            "- Generate each new account name by combining a random prefix "
-            "with a random suffix (e.g. 'Apex Technologies'). Avoid exact "
-            "duplicates within the same run."
+            "- Accounts represent **individual consumers**, not businesses. "
+            "Name each account after a real person and treat them as a "
+            "single end customer."
         )
+        if prefixes or suffixes:
+            if prefixes:
+                lines.append(f"- **First names:** {', '.join(prefixes)}")
+            if suffixes:
+                lines.append(f"- **Last names:** {', '.join(suffixes)}")
+            lines.append(
+                "- Generate each new account name by combining a random first "
+                "name with a random last name (e.g. 'John Smith'). Avoid exact "
+                "duplicates within the same run."
+            )
+        else:
+            lines.append("*(use realistic individual person names of your choice)*")
     else:
-        lines.append("*(use realistic tech-industry names of your choice)*")
+        lines.append("### Company name pool (B2B)")
+        lines.append(
+            "- Accounts represent **businesses**. Name each account after a "
+            "company."
+        )
+        if prefixes or suffixes:
+            if prefixes:
+                lines.append(f"- **Prefixes:** {', '.join(prefixes)}")
+            if suffixes:
+                lines.append(f"- **Suffixes:** {', '.join(suffixes)}")
+            lines.append(
+                "- Generate each new account name by combining a random prefix "
+                "with a random suffix (e.g. 'Apex Technologies'). Avoid exact "
+                "duplicates within the same run."
+            )
+        else:
+            lines.append("*(use realistic tech-industry names of your choice)*")
     lines.append("")
 
     # Currency mix
