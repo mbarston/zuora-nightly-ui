@@ -25,6 +25,7 @@ existing config automatically.
 """
 from __future__ import annotations
 
+import json
 import logging
 import re
 from dataclasses import asdict, dataclass, field
@@ -56,6 +57,54 @@ class CatalogImportError(RuntimeError):
     pass
 
 
+# Known Zuora data-center REST hosts, surfaced in the auth-failure hint so the
+# user can spot a base-URL / data-center mismatch (the #1 cause of a generic
+# 400 on /oauth/token — valid prod credentials only authenticate at their own
+# data-center host, not the generic rest.zuora.com).
+KNOWN_DATA_CENTER_HOSTS = (
+    "rest.na.zuora.com",
+    "rest.eu.zuora.com",
+    "rest.apisandbox.zuora.com",
+)
+
+
+def _looks_like_dc_mismatch(status_code: int, body: str) -> bool:
+    """
+    Heuristic: distinguish a data-center/host mismatch from genuinely bad
+    credentials on a 400/401 from /oauth/token.
+
+    Zuora's OAuth endpoint returns the standard OAuth error shape
+    (``{"error": "invalid_client", "error_description": "..."}``) when the
+    client id/secret are wrong but the host is right. When the host is wrong
+    (e.g. NA-provisioned client hitting the generic rest.zuora.com), the
+    request never reaches the OAuth handler and we get a generic Spring error
+    body instead (``{"timestamp", "status", "error", "path"}``) — no
+    ``error_description`` / OAuth ``error`` key. We treat that as a likely
+    host mismatch.
+    """
+    if status_code not in (400, 401):
+        return False
+    try:
+        data = json.loads(body)
+    except (ValueError, TypeError):
+        # Non-JSON body (e.g. an HTML 404/proxy page) — also points at the
+        # wrong host rather than bad credentials.
+        return True
+    if not isinstance(data, dict):
+        return True
+    oauth_error = str(data.get("error") or "")
+    # The OAuth error shape carries error_description, or an OAuth-specific
+    # error code like invalid_client / invalid_grant / unauthorized_client.
+    if "error_description" in data:
+        return False
+    if oauth_error in {"invalid_client", "invalid_grant", "unauthorized_client", "invalid_request"}:
+        return False
+    # Generic Spring error shape (timestamp + path, no OAuth fields).
+    if "timestamp" in data or "path" in data:
+        return True
+    return False
+
+
 @dataclass
 class ImportedRatePlan:
     name: str
@@ -64,37 +113,52 @@ class ImportedRatePlan:
 
 
 @dataclass
-class ImportedProduct:
+class ImportedCatalogItem:
+    """One Zuora product, with our best guess at how to use it.
+
+    ``suggested_role`` is the default base/add-on split (driven by the Zuora
+    ``category`` field, falling back to a name heuristic). The UI shows this
+    as the default and lets the user flip any product before importing.
+    The extra Zuora fields (sku/product_number/description) are surfaced
+    purely to help the user make that call — add more here as needed.
+    """
     label: str
-    tier: int
+    category: str | None       # raw Zuora category, e.g. "Base Products"
+    suggested_role: str        # "base" | "addon"
+    tier: int                  # suggested tier for base items; 0 for add-ons
+    sku: str | None
+    product_number: str | None
+    description: str | None
     rate_plans: list[ImportedRatePlan] = field(default_factory=list)
 
 
-@dataclass
-class ImportedAddon:
-    name: str
-    product_rate_plan_id: str
+# Zuora's standard Product.category enum values that map cleanly to a role.
+_CATEGORY_BASE = "Base Products"
+_CATEGORY_ADDON = "Add On Services"
 
 
 @dataclass
 class ImportPreview:
-    products: list[ImportedProduct]
-    addons: list[ImportedAddon]
+    items: list[ImportedCatalogItem]
     total_products_seen: int
     total_rate_plans_seen: int
     warnings: list[str]
 
     def to_dict(self) -> dict:
         return {
-            "products": [
+            "items": [
                 {
-                    "label": p.label,
-                    "tier": p.tier,
-                    "rate_plans": [asdict(rp) for rp in p.rate_plans],
+                    "label": it.label,
+                    "category": it.category,
+                    "suggested_role": it.suggested_role,
+                    "tier": it.tier,
+                    "sku": it.sku,
+                    "product_number": it.product_number,
+                    "description": it.description,
+                    "rate_plans": [asdict(rp) for rp in it.rate_plans],
                 }
-                for p in self.products
+                for it in self.items
             ],
-            "addons": [asdict(a) for a in self.addons],
             "total_products_seen": self.total_products_seen,
             "total_rate_plans_seen": self.total_rate_plans_seen,
             "warnings": self.warnings,
@@ -116,8 +180,19 @@ async def fetch_token(
             headers={"Content-Type": "application/x-www-form-urlencoded"},
         )
     if resp.status_code != 200:
+        body = resp.text or ""
+        if _looks_like_dc_mismatch(resp.status_code, body):
+            host = base_url.rstrip("/").split("//", 1)[-1]
+            raise CatalogImportError(
+                f"Authentication failed (HTTP {resp.status_code}) against {host}. "
+                "Verify the base URL matches your tenant's Zuora data center — "
+                "credentials provisioned in one data center are rejected by every "
+                "other host, including the generic rest.zuora.com. Common hosts: "
+                + ", ".join(KNOWN_DATA_CENTER_HOSTS)
+                + " (see Zuora's API docs for the full list)."
+            )
         raise CatalogImportError(
-            f"OAuth token request failed (HTTP {resp.status_code}): {resp.text[:300]}"
+            f"OAuth token request failed (HTTP {resp.status_code}): {body[:300]}"
         )
     data = resp.json()
     token = data.get("access_token")
@@ -169,20 +244,47 @@ def _infer_period(rate_plan_name: str) -> str:
     return "Other"
 
 
+def _suggest_role(name: str, category: str | None) -> str:
+    """Decide base vs add-on. Zuora's ``category`` wins; otherwise guess by name.
+
+    Zuora's standard Product.category enum maps directly:
+      - "Base Products"   → base (tier products customers subscribe to)
+      - "Add On Services" → add-on
+    For products with no usable category (None / "Miscellaneous Products" /
+    a custom value) we fall back to the old name heuristic and let the user
+    flip the toggle in the import modal.
+    """
+    if category == _CATEGORY_BASE:
+        return "base"
+    if category == _CATEGORY_ADDON:
+        return "addon"
+    is_addon_signal = any(
+        kw in name.lower()
+        for kw in ("add-on", "addon", "analytics", "insights", "add on")
+    )
+    if is_addon_signal:
+        return "addon"
+    if _infer_tier(name) is not None:
+        return "base"
+    # Default unknowns to add-on; promoting in the UI is one click.
+    return "addon"
+
+
 def classify(products_raw: list[dict]) -> ImportPreview:
     """
-    Turn raw /v1/catalog/products payloads into ImportPreview.
+    Turn raw /v1/catalog/products payloads into an ImportPreview of unified
+    catalog items.
 
-    Heuristic:
-      - A product with >1 rate plan and a recognisable tier keyword → tier product
-      - A product with 1 rate plan OR name containing "add-on"/"analytics"/
-        "insights"/etc. → add-on (we surface each rate plan as an add-on entry)
-      - Everything else defaults to add-on; the user can re-classify in the form.
+    Each Zuora product becomes one ImportedCatalogItem carrying a
+    ``suggested_role`` (base/add-on) derived primarily from the Zuora
+    ``category`` field. The UI renders the suggestion as the default and lets
+    the user override per product before importing, so classification is no
+    longer a one-shot guess.
     """
-    products: list[ImportedProduct] = []
-    addons: list[ImportedAddon] = []
+    items: list[ImportedCatalogItem] = []
     warnings: list[str] = []
     rp_count = 0
+    uncategorised = 0
 
     for prod in products_raw:
         name = prod.get("name") or ""
@@ -192,61 +294,63 @@ def classify(products_raw: list[dict]) -> ImportPreview:
         if not name or not rate_plans_raw:
             continue
 
-        is_addon_signal = any(
-            kw in name.lower()
-            for kw in ("add-on", "addon", "analytics", "insights", "add on")
-        )
-        tier_guess = _infer_tier(name)
+        category = prod.get("category")
+        if category not in (_CATEGORY_BASE, _CATEGORY_ADDON):
+            uncategorised += 1
 
-        if tier_guess is not None and len(rate_plans_raw) >= 1 and not is_addon_signal:
-            # Classify as a tier product
-            products.append(
-                ImportedProduct(
-                    label=name,
-                    tier=tier_guess,
-                    rate_plans=[
-                        ImportedRatePlan(
-                            name=rp.get("name") or "(unnamed)",
-                            period=_infer_period(rp.get("name") or ""),
-                            product_rate_plan_id=rp.get("id") or "",
-                        )
-                        for rp in rate_plans_raw
-                        if rp.get("id")
-                    ],
-                )
+        items.append(
+            ImportedCatalogItem(
+                label=name,
+                category=category,
+                suggested_role=_suggest_role(name, category),
+                tier=_infer_tier(name) or 0,  # provisional; renumbered below
+                sku=prod.get("sku"),
+                product_number=prod.get("productNumber"),
+                description=prod.get("description"),
+                rate_plans=[
+                    ImportedRatePlan(
+                        name=rp.get("name") or "(unnamed)",
+                        period=_infer_period(rp.get("name") or ""),
+                        product_rate_plan_id=rp.get("id") or "",
+                    )
+                    for rp in rate_plans_raw
+                    if rp.get("id")
+                ],
             )
-        else:
-            # Treat every rate plan as a separate add-on entry
-            for rp in rate_plans_raw:
-                if not rp.get("id"):
-                    continue
-                rp_name = rp.get("name") or ""
-                label = f"{name} — {rp_name}" if rp_name else name
-                addons.append(
-                    ImportedAddon(name=label, product_rate_plan_id=rp["id"])
-                )
-
-    # --- normalise tier numbers to 1..N with no gaps ---
-    # Sort products by inferred tier number ascending, then relabel.
-    products.sort(key=lambda p: p.tier)
-    for i, p in enumerate(products, start=1):
-        p.tier = i
-
-    if not products:
-        warnings.append(
-            "No products matched any tier keyword (Basic/Pro/Enterprise/…). "
-            "Everything was classified as an add-on — you'll need to manually "
-            "promote one or more to tier products."
         )
-    elif len(products) < 2:
+
+    # --- assign sequential tier numbers (1..N) to base items only ---
+    # Name-inferred tiers sort first (so Basic < Pro < Enterprise survives),
+    # then everything is renumbered with no gaps so the generator's tier_mix
+    # lines up. Add-on items carry tier 0.
+    base_items = [it for it in items if it.suggested_role == "base"]
+    base_items.sort(key=lambda it: (it.tier == 0, it.tier))
+    for i, it in enumerate(base_items, start=1):
+        it.tier = i
+    for it in items:
+        if it.suggested_role != "base":
+            it.tier = 0
+
+    if not base_items:
         warnings.append(
-            "Only one tier product found. Upgrades and downgrades won't work "
-            "with a single tier."
+            "No products were classified as base/tier products. Use the "
+            "Base / Add-on toggle to promote at least one so new subscriptions "
+            "have something to start on."
+        )
+    elif len(base_items) < 2:
+        warnings.append(
+            "Only one base product found. Upgrades and downgrades won't work "
+            "with a single tier — promote another product if you expect tier moves."
+        )
+    if uncategorised:
+        warnings.append(
+            f"{uncategorised} product(s) had no usable Zuora category; their "
+            "base/add-on guess came from the product name. Double-check the "
+            "toggle for those."
         )
 
     return ImportPreview(
-        products=products,
-        addons=addons,
+        items=items,
         total_products_seen=len(products_raw),
         total_rate_plans_seen=rp_count,
         warnings=warnings,

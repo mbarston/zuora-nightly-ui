@@ -148,20 +148,21 @@ export interface ImportedRatePlan {
   product_rate_plan_id: string;
 }
 
-export interface ImportedProduct {
+export type ImportRole = "base" | "addon";
+
+export interface ImportedCatalogItem {
   label: string;
+  category: string | null;
+  suggested_role: ImportRole;
   tier: number;
+  sku: string | null;
+  product_number: string | null;
+  description: string | null;
   rate_plans: ImportedRatePlan[];
 }
 
-export interface ImportedAddon {
-  name: string;
-  product_rate_plan_id: string;
-}
-
 export interface CatalogImportPreview {
-  products: ImportedProduct[];
-  addons: ImportedAddon[];
+  items: ImportedCatalogItem[];
   total_products_seen: number;
   total_rate_plans_seen: number;
   warnings: string[];

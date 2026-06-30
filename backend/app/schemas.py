@@ -197,20 +197,19 @@ class ImportedRatePlanOut(BaseModel):
     product_rate_plan_id: str
 
 
-class ImportedProductOut(BaseModel):
+class ImportedCatalogItemOut(BaseModel):
     label: str
+    category: str | None = None
+    suggested_role: Literal["base", "addon"]
     tier: int
+    sku: str | None = None
+    product_number: str | None = None
+    description: str | None = None
     rate_plans: list[ImportedRatePlanOut]
 
 
-class ImportedAddonOut(BaseModel):
-    name: str
-    product_rate_plan_id: str
-
-
 class CatalogImportPreviewOut(BaseModel):
-    products: list[ImportedProductOut]
-    addons: list[ImportedAddonOut]
+    items: list[ImportedCatalogItemOut]
     total_products_seen: int
     total_rate_plans_seen: int
     warnings: list[str]
