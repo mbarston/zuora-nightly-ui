@@ -42,8 +42,12 @@ export interface MandatorySub {
 }
 
 export interface NamePool {
+  // Company (B2B) pool
   prefixes: string[];
   suffixes: string[];
+  // Person (B2C) pool
+  first_names: string[];
+  last_names: string[];
 }
 
 export interface TenantConfig {
@@ -61,7 +65,8 @@ export interface TenantConfig {
   tier_mix: Record<string, number>;
   amendment_mix: Record<string, number>;
   growth_bias_bp: number;
-  account_type: "company" | "person";
+  account_type: "company" | "person" | "mixed";
+  company_share: number;
   name_pool: NamePool;
   currency_mix: Record<string, number>;
   payments: {

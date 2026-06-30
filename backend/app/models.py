@@ -163,11 +163,12 @@ class TenantConfig(Base):
     growth_bias_bp: Mapped[int] = mapped_column(Integer, default=100)  # 100 = 1.0x
 
     # --- account type + name pool ---
-    # "company" (B2B) → name_pool's two lists are company prefixes + suffixes,
-    # combined into "Apex Technologies". "person" (B2C) → the same two lists are
-    # reinterpreted as first names + last names, combined into "John Smith".
-    # The prompt builder branches on this value.
+    # "company" (B2B) → company names from name_pool.prefixes + .suffixes
+    # ("Apex Technologies"). "person" (B2C) → person names from
+    # name_pool.first_names + .last_names ("John Smith"). "mixed" → a blend of
+    # both, where company_share is the % of new accounts that are companies.
     account_type: Mapped[str] = mapped_column(String, default="company")
+    company_share: Mapped[int] = mapped_column(Integer, default=50)  # only used when mixed
     name_pool: Mapped[dict] = mapped_column(JSON, default=dict)
 
     # --- currency mix ---
