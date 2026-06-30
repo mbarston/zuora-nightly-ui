@@ -7,6 +7,13 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 
 interface Props {
   mode: "create" | "edit";
@@ -19,6 +26,21 @@ interface FormState {
   client_id: string;
   client_secret: string;
 }
+
+// Known Zuora data-center REST hosts. Picking the right one avoids the
+// confusing generic 400 you get when credentials provisioned in one data
+// center are sent to another host (including the generic rest.zuora.com).
+const DATA_CENTERS: { url: string; label: string }[] = [
+  { url: "https://rest.na.zuora.com", label: "US Cloud NA (prod) — rest.na.zuora.com" },
+  { url: "https://rest.zuora.com", label: "US Cloud (prod) — rest.zuora.com" },
+  { url: "https://rest.eu.zuora.com", label: "EU Cloud (prod) — rest.eu.zuora.com" },
+  { url: "https://rest.ap.zuora.com", label: "APAC Cloud (prod) — rest.ap.zuora.com" },
+  { url: "https://rest.apisandbox.zuora.com", label: "US API Sandbox — rest.apisandbox.zuora.com" },
+  { url: "https://rest.test.zuora.com", label: "US Central Sandbox — rest.test.zuora.com" },
+  { url: "https://rest.sandbox.eu.zuora.com", label: "EU Sandbox — rest.sandbox.eu.zuora.com" },
+];
+
+const CUSTOM_BASE_URL = "__custom__";
 
 const EMPTY: FormState = {
   name: "",
@@ -35,6 +57,9 @@ export function TenantFormPage({ mode }: Props) {
   const qc = useQueryClient();
 
   const [form, setForm] = useState<FormState>(EMPTY);
+  // True when the base URL isn't one of the known data-center hosts, so we
+  // show a free-text input instead of the dropdown selection.
+  const [customBaseUrl, setCustomBaseUrl] = useState(false);
 
   const existing = useQuery({
     queryKey: ["tenant", tenantId],
@@ -51,6 +76,9 @@ export function TenantFormPage({ mode }: Props) {
         client_id: existing.data.client_id,
         client_secret: "",
       });
+      setCustomBaseUrl(
+        !DATA_CENTERS.some((dc) => dc.url === existing.data.base_url)
+      );
     }
   }, [mode, existing.data]);
 
@@ -127,13 +155,43 @@ export function TenantFormPage({ mode }: Props) {
                 />
               </div>
               <div>
-                <Label>Base URL</Label>
-                <Input
-                  value={form.base_url}
-                  onChange={(e) => setForm({ ...form, base_url: e.target.value })}
-                  placeholder="https://rest.test.zuora.com"
-                  required
-                />
+                <Label>Base URL (data center)</Label>
+                <Select
+                  value={customBaseUrl ? CUSTOM_BASE_URL : form.base_url}
+                  onValueChange={(v) => {
+                    if (v === CUSTOM_BASE_URL) {
+                      setCustomBaseUrl(true);
+                    } else {
+                      setCustomBaseUrl(false);
+                      setForm({ ...form, base_url: v });
+                    }
+                  }}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="Select your Zuora data center" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {DATA_CENTERS.map((dc) => (
+                      <SelectItem key={dc.url} value={dc.url}>
+                        {dc.label}
+                      </SelectItem>
+                    ))}
+                    <SelectItem value={CUSTOM_BASE_URL}>Other (custom URL)…</SelectItem>
+                  </SelectContent>
+                </Select>
+                {customBaseUrl && (
+                  <Input
+                    className="mt-2 font-mono text-xs"
+                    value={form.base_url}
+                    onChange={(e) => setForm({ ...form, base_url: e.target.value })}
+                    placeholder="https://rest.example.zuora.com"
+                    required
+                  />
+                )}
+                <p className="mt-1 text-xs text-muted-foreground">
+                  Must match the data center your tenant lives in — the wrong host
+                  rejects valid credentials with a generic error.
+                </p>
               </div>
             </div>
             <div>

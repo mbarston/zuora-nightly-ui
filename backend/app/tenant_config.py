@@ -118,6 +118,13 @@ DEFAULT_AMENDMENT_MIX: dict[str, int] = {
 }
 
 
+DEFAULT_ACCOUNT_TYPE = "company"  # "company" (B2B) | "person" (B2C) | "mixed"
+DEFAULT_COMPANY_SHARE = 50        # % of accounts that are companies when mixed
+
+# The name pool holds two independent pools so a tenant can generate company
+# names, person names, or a blend of both:
+#   - company (B2B): prefixes + suffixes  → "Apex Technologies"
+#   - person  (B2C): first_names + last_names → "John Smith"
 DEFAULT_NAME_POOL: dict[str, list[str]] = {
     "prefixes": [
         "Apex", "NovaBridge", "Quantum", "Skyline", "DataVault", "CloudForge",
@@ -127,6 +134,15 @@ DEFAULT_NAME_POOL: dict[str, list[str]] = {
     "suffixes": [
         "Technologies", "Software", "Systems", "Dynamics", "Analytics",
         "Labs", "Platforms", "Networks", "Digital", "AI", "Solutions", "Corp",
+    ],
+    "first_names": [
+        "James", "Maria", "David", "Sofia", "Michael", "Aisha", "Daniel",
+        "Emma", "Carlos", "Priya", "Liam", "Hannah", "Noah", "Olivia",
+        "Ethan", "Grace",
+    ],
+    "last_names": [
+        "Smith", "Johnson", "Williams", "Garcia", "Brown", "Patel", "Nguyen",
+        "Martinez", "Lee", "Davis", "Rodriguez", "Wilson", "Khan", "Taylor",
     ],
 }
 
@@ -168,6 +184,8 @@ def seed_default_config(tenant_id: int) -> TenantConfig:
         tier_mix=dict(DEFAULT_TIER_MIX),
         amendment_mix=dict(DEFAULT_AMENDMENT_MIX),
         growth_bias_bp=100,
+        account_type=DEFAULT_ACCOUNT_TYPE,
+        company_share=DEFAULT_COMPANY_SHARE,
         name_pool=dict(DEFAULT_NAME_POOL),
         currency_mix=dict(DEFAULT_CURRENCY_MIX),
         payments=dict(DEFAULT_PAYMENTS),
@@ -396,15 +414,38 @@ def validate(config: TenantConfig | None) -> list[ValidationIssue]:
                 )
 
     # --- name pool ---
+    account_type = (getattr(config, "account_type", None) or "company")
     pool = config.name_pool or {}
-    if not pool.get("prefixes") or not pool.get("suffixes"):
+    needs_company = account_type in ("company", "mixed")
+    needs_person = account_type in ("person", "mixed")
+    if needs_company and (not pool.get("prefixes") or not pool.get("suffixes")):
         issues.append(
             ValidationIssue(
                 "name_pool",
                 "warning",
-                "Name pool is missing prefixes or suffixes — new account names will fall back to the skill's defaults.",
+                "Company name pool is missing prefixes or suffixes — company account "
+                "names will fall back to the skill's defaults.",
             )
         )
+    if needs_person and (not pool.get("first_names") or not pool.get("last_names")):
+        issues.append(
+            ValidationIssue(
+                "name_pool",
+                "warning",
+                "Person name pool is missing first names or last names — individual "
+                "account names will fall back to the skill's defaults.",
+            )
+        )
+    if account_type == "mixed":
+        share = getattr(config, "company_share", None)
+        if share is None or not (0 <= int(share) <= 100):
+            issues.append(
+                ValidationIssue(
+                    "company_share",
+                    "warning",
+                    "Mixed mode needs a company share between 0 and 100.",
+                )
+            )
 
     # --- payments ---
     payments = config.payments or {}
@@ -555,22 +596,75 @@ def to_prompt_markdown(tenant_name: str, config: TenantConfig) -> str:
     )
     lines.append("")
 
-    # Name pool
-    lines.append("### Company name pool")
-    prefixes = (config.name_pool or {}).get("prefixes", [])
-    suffixes = (config.name_pool or {}).get("suffixes", [])
-    if prefixes or suffixes:
-        if prefixes:
-            lines.append(f"- **Prefixes:** {', '.join(prefixes)}")
-        if suffixes:
-            lines.append(f"- **Suffixes:** {', '.join(suffixes)}")
+    # Name pool — B2B (company), B2C (person), or a mixed blend of both.
+    account_type = (getattr(config, "account_type", None) or "company")
+    pool = config.name_pool or {}
+    prefixes = pool.get("prefixes", [])
+    suffixes = pool.get("suffixes", [])
+    first_names = pool.get("first_names", [])
+    last_names = pool.get("last_names", [])
+
+    def _company_lines(heading: bool) -> None:
+        if heading:
+            lines.append("**Company (B2B) pool**")
+        if prefixes or suffixes:
+            if prefixes:
+                lines.append(f"- **Prefixes:** {', '.join(prefixes)}")
+            if suffixes:
+                lines.append(f"- **Suffixes:** {', '.join(suffixes)}")
+            lines.append(
+                "- Company name = a random prefix + a random suffix "
+                "(e.g. 'Apex Technologies')."
+            )
+        else:
+            lines.append("- *(use realistic tech-industry company names of your choice)*")
+
+    def _person_lines(heading: bool) -> None:
+        if heading:
+            lines.append("**Person (B2C) pool**")
+        if first_names or last_names:
+            if first_names:
+                lines.append(f"- **First names:** {', '.join(first_names)}")
+            if last_names:
+                lines.append(f"- **Last names:** {', '.join(last_names)}")
+            lines.append(
+                "- Person name = a random first name + a random last name "
+                "(e.g. 'John Smith')."
+            )
+        else:
+            lines.append("- *(use realistic individual person names of your choice)*")
+
+    if account_type == "person":
+        lines.append("### Customer name pool (B2C)")
         lines.append(
-            "- Generate each new account name by combining a random prefix "
-            "with a random suffix (e.g. 'Apex Technologies'). Avoid exact "
-            "duplicates within the same run."
+            "- Accounts represent **individual consumers**, not businesses. "
+            "Name each account after a real person."
         )
+        _person_lines(heading=False)
+        lines.append("- Avoid exact duplicates within the same run.")
+    elif account_type == "mixed":
+        share = getattr(config, "company_share", DEFAULT_COMPANY_SHARE)
+        try:
+            share = max(0, min(100, int(share)))
+        except (TypeError, ValueError):
+            share = DEFAULT_COMPANY_SHARE
+        lines.append("### Customer name pool (mixed B2B + B2C)")
+        lines.append(
+            f"- Generate a blend of customers: about **{share}% businesses** and "
+            f"**{100 - share}% individuals**. For each new account, first pick its "
+            "type by that ratio, then name it from the matching pool below."
+        )
+        _company_lines(heading=True)
+        _person_lines(heading=True)
+        lines.append("- Avoid exact duplicates within the same run.")
     else:
-        lines.append("*(use realistic tech-industry names of your choice)*")
+        lines.append("### Company name pool (B2B)")
+        lines.append(
+            "- Accounts represent **businesses**. Name each account after a "
+            "company."
+        )
+        _company_lines(heading=False)
+        lines.append("- Avoid exact duplicates within the same run.")
     lines.append("")
 
     # Currency mix

@@ -170,7 +170,10 @@ def _envelope(tenant: Tenant, cfg: TenantConfig) -> TenantConfigEnvelopeOut:
                 "tier_mix": cfg.tier_mix or {},
                 "amendment_mix": cfg.amendment_mix or {},
                 "growth_bias_bp": cfg.growth_bias_bp,
-                "name_pool": cfg.name_pool or {"prefixes": [], "suffixes": []},
+                "account_type": cfg.account_type or "company",
+                "company_share": cfg.company_share if cfg.company_share is not None else 50,
+                "name_pool": cfg.name_pool
+                or {"prefixes": [], "suffixes": [], "first_names": [], "last_names": []},
                 "currency_mix": cfg.currency_mix or {},
                 "payments": cfg.payments or {},
                 "writeoffs": cfg.writeoffs or {},
@@ -361,6 +364,8 @@ def save_config(
     cfg.tier_mix = {str(k): int(v) for k, v in body.tier_mix.items()}
     cfg.amendment_mix = {str(k): int(v) for k, v in body.amendment_mix.items()}
     cfg.growth_bias_bp = body.growth_bias_bp
+    cfg.account_type = body.account_type
+    cfg.company_share = body.company_share
     cfg.name_pool = body.name_pool.model_dump()
     cfg.currency_mix = {str(k): int(v) for k, v in body.currency_mix.items()}
     cfg.payments = body.payments

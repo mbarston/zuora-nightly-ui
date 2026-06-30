@@ -5,7 +5,8 @@ import { api } from "@/lib/api";
 import type {
   Addon,
   CatalogImportPreview,
-  ImportedProduct,
+  ImportedCatalogItem,
+  ImportRole,
   Product,
   TenantConfig,
 } from "@/lib/types";
@@ -27,16 +28,19 @@ import {
  *
  * Flow:
  *   1. Opens → kicks off POST /api/tenants/{id}/config/import-preview
- *   2. Receives a CatalogImportPreview
- *   3. Renders a two-level checkbox tree of products → rate plans,
- *      pre-selecting the classifier's guesses. Add-ons are a flat list
- *      with checkboxes.
- *   4. "Import selected" MERGES the selection into the current config:
- *      - Existing products with the same product_rate_plan_id are updated
- *      - New products are appended
- *      - Unselected items are left alone (not clobbered)
- *   5. Parent receives the merged config via onImport and decides when
- *      to PUT it back to the server.
+ *   2. Receives a CatalogImportPreview of unified catalog items, each with a
+ *      Zuora `category` and a `suggested_role` (base/add-on).
+ *   3. Renders one row per product with:
+ *        - a Base / Add-on toggle (defaulted from the suggestion)
+ *        - a tier number input when the row is Base
+ *        - the `category` badge + sku / product number / description, to help
+ *          the user decide
+ *        - rate-plan checkboxes (which plans to actually pull in)
+ *   4. "Import selected" splits the rows by their chosen role — Base rows
+ *      become tier Products, Add-on rows turn each selected rate plan into an
+ *      Addon — then MERGES into the current config (matched by
+ *      product_rate_plan_id; unselected items are left alone).
+ *   5. Parent receives the merged config via onImport and decides when to PUT.
  */
 
 interface Props {
@@ -47,11 +51,9 @@ interface Props {
   onImport: (merged: { products: Product[]; addons: Addon[] }) => void;
 }
 
-interface SelectionState {
-  // product label + rate plan index, encoded as `${prodIdx}:${rpIdx}`
-  rate_plans: Set<string>;
-  // addon index
-  addons: Set<number>;
+interface ItemState {
+  role: ImportRole;
+  tier: number;
 }
 
 export function CatalogImportModal({
@@ -63,22 +65,24 @@ export function CatalogImportModal({
 }: Props) {
   const [filter, setFilter] = useState("");
   const [expanded, setExpanded] = useState<Set<number>>(new Set());
-  const [selection, setSelection] = useState<SelectionState>({
-    rate_plans: new Set(),
-    addons: new Set(),
-  });
+  // Which rate plans are selected, encoded as `${itemIdx}:${rpIdx}`.
+  const [selectedRP, setSelectedRP] = useState<Set<string>>(new Set());
+  // Per-item role + tier overrides, keyed by item index.
+  const [itemState, setItemState] = useState<Record<number, ItemState>>({});
 
   const importMut = useMutation({
     mutationFn: () => api.importCatalog(tenantId),
     onSuccess: (preview) => {
-      // Pre-select everything by default.
+      // Pre-select every rate plan, and seed role/tier from the server guess.
       const rp = new Set<string>();
-      preview.products.forEach((p, pi) => {
-        p.rate_plans.forEach((_rp, rpi) => rp.add(`${pi}:${rpi}`));
+      const st: Record<number, ItemState> = {};
+      preview.items.forEach((it, i) => {
+        it.rate_plans.forEach((_rp, rpi) => rp.add(`${i}:${rpi}`));
+        st[i] = { role: it.suggested_role, tier: it.tier || 1 };
       });
-      const add = new Set<number>(preview.addons.map((_, i) => i));
-      setSelection({ rate_plans: rp, addons: add });
-      setExpanded(new Set(preview.products.map((_, i) => i)));
+      setSelectedRP(rp);
+      setItemState(st);
+      setExpanded(new Set(preview.items.map((_, i) => i)));
     },
   });
 
@@ -97,114 +101,125 @@ export function CatalogImportModal({
 
   const preview = importMut.data as CatalogImportPreview | undefined;
 
-  const filteredProducts = useMemo(() => {
+  const filteredItems = useMemo(() => {
     if (!preview) return [];
-    if (!filter.trim()) return preview.products.map((p, i) => ({ p, i }));
+    const list = preview.items.map((it, i) => ({ it, i }));
+    if (!filter.trim()) return list;
     const needle = filter.toLowerCase();
-    return preview.products
-      .map((p, i) => ({ p, i }))
-      .filter(
-        ({ p }) =>
-          p.label.toLowerCase().includes(needle) ||
-          p.rate_plans.some((rp) => rp.name.toLowerCase().includes(needle))
-      );
-  }, [preview, filter]);
-
-  const filteredAddons = useMemo(() => {
-    if (!preview) return [];
-    if (!filter.trim()) return preview.addons.map((a, i) => ({ a, i }));
-    const needle = filter.toLowerCase();
-    return preview.addons
-      .map((a, i) => ({ a, i }))
-      .filter(({ a }) => a.name.toLowerCase().includes(needle));
+    return list.filter(
+      ({ it }) =>
+        it.label.toLowerCase().includes(needle) ||
+        (it.category ?? "").toLowerCase().includes(needle) ||
+        (it.sku ?? "").toLowerCase().includes(needle) ||
+        it.rate_plans.some((rp) => rp.name.toLowerCase().includes(needle))
+    );
   }, [preview, filter]);
 
   const counts = useMemo(() => {
-    if (!preview) return { products: 0, ratePlans: 0, addons: 0 };
-    const pset = new Set<number>();
-    selection.rate_plans.forEach((k) => pset.add(Number(k.split(":")[0])));
+    if (!preview) return { base: 0, addon: 0, ratePlans: 0 };
+    const baseProducts = new Set<number>();
+    let addonPlans = 0;
+    selectedRP.forEach((k) => {
+      const i = Number(k.split(":")[0]);
+      const role = itemState[i]?.role ?? preview.items[i]?.suggested_role;
+      if (role === "base") baseProducts.add(i);
+      else addonPlans += 1;
+    });
     return {
-      products: pset.size,
-      ratePlans: selection.rate_plans.size,
-      addons: selection.addons.size,
+      base: baseProducts.size,
+      addon: addonPlans,
+      ratePlans: selectedRP.size,
     };
-  }, [preview, selection]);
+  }, [preview, selectedRP, itemState]);
 
-  const toggleExpand = (i: number) => {
+  const toggleExpand = (i: number) =>
     setExpanded((prev) => {
       const next = new Set(prev);
       next.has(i) ? next.delete(i) : next.add(i);
       return next;
     });
-  };
 
-  const toggleProduct = (pi: number, rpCount: number) => {
-    setSelection((prev) => {
-      const next = { ...prev, rate_plans: new Set(prev.rate_plans) };
+  const toggleItem = (i: number, rpCount: number) =>
+    setSelectedRP((prev) => {
+      const next = new Set(prev);
       const allSelected = Array.from({ length: rpCount }).every((_, rpi) =>
-        next.rate_plans.has(`${pi}:${rpi}`)
+        next.has(`${i}:${rpi}`)
       );
-      if (allSelected) {
-        for (let rpi = 0; rpi < rpCount; rpi++) next.rate_plans.delete(`${pi}:${rpi}`);
-      } else {
-        for (let rpi = 0; rpi < rpCount; rpi++) next.rate_plans.add(`${pi}:${rpi}`);
+      for (let rpi = 0; rpi < rpCount; rpi++) {
+        allSelected ? next.delete(`${i}:${rpi}`) : next.add(`${i}:${rpi}`);
       }
       return next;
     });
-  };
 
-  const toggleRatePlan = (pi: number, rpi: number) => {
-    setSelection((prev) => {
-      const next = { ...prev, rate_plans: new Set(prev.rate_plans) };
-      const key = `${pi}:${rpi}`;
-      next.rate_plans.has(key) ? next.rate_plans.delete(key) : next.rate_plans.add(key);
+  const toggleRatePlan = (i: number, rpi: number) =>
+    setSelectedRP((prev) => {
+      const next = new Set(prev);
+      const key = `${i}:${rpi}`;
+      next.has(key) ? next.delete(key) : next.add(key);
       return next;
     });
-  };
 
-  const toggleAddon = (i: number) => {
-    setSelection((prev) => {
-      const next = { ...prev, addons: new Set(prev.addons) };
-      next.addons.has(i) ? next.addons.delete(i) : next.addons.add(i);
-      return next;
-    });
-  };
+  const setRole = (i: number, role: ImportRole) =>
+    setItemState((prev) => ({
+      ...prev,
+      [i]: { role, tier: prev[i]?.tier ?? 1 },
+    }));
+
+  const setTier = (i: number, tier: number) =>
+    setItemState((prev) => ({
+      ...prev,
+      [i]: { role: prev[i]?.role ?? "base", tier },
+    }));
 
   const selectAll = () => {
     if (!preview) return;
     const rp = new Set<string>();
-    preview.products.forEach((p, pi) => {
-      p.rate_plans.forEach((_rp, rpi) => rp.add(`${pi}:${rpi}`));
-    });
-    setSelection({ rate_plans: rp, addons: new Set(preview.addons.map((_, i) => i)) });
+    preview.items.forEach((it, i) =>
+      it.rate_plans.forEach((_rp, rpi) => rp.add(`${i}:${rpi}`))
+    );
+    setSelectedRP(rp);
   };
 
-  const selectNone = () => {
-    setSelection({ rate_plans: new Set(), addons: new Set() });
-  };
+  const selectNone = () => setSelectedRP(new Set());
 
   const doImport = () => {
     if (!preview) return;
-    // Build the partial import product list from the selection.
-    const importedProducts: Product[] = preview.products
-      .map((p, pi) => ({
-        label: p.label,
-        tier: p.tier,
-        rate_plans: p.rate_plans
-          .map((rp, rpi) =>
-            selection.rate_plans.has(`${pi}:${rpi}`)
-              ? { name: rp.name, period: rp.period, product_rate_plan_id: rp.product_rate_plan_id }
-              : null
-          )
-          .filter((x): x is NonNullable<typeof x> => x !== null),
-      }))
-      .filter((p) => p.rate_plans.length > 0);
+    const importedProducts: Product[] = [];
+    const importedAddons: Addon[] = [];
 
-    const importedAddons: Addon[] = preview.addons
-      .filter((_, i) => selection.addons.has(i))
-      .map((a) => ({ name: a.name, product_rate_plan_id: a.product_rate_plan_id }));
+    preview.items.forEach((it, i) => {
+      const role = itemState[i]?.role ?? it.suggested_role;
+      const tier = itemState[i]?.tier ?? it.tier ?? 1;
+      const selectedPlans = it.rate_plans.filter((_rp, rpi) =>
+        selectedRP.has(`${i}:${rpi}`)
+      );
+      if (selectedPlans.length === 0) return;
 
-    // Merge into current config (don't clobber unselected).
+      if (role === "base") {
+        importedProducts.push({
+          label: it.label,
+          tier,
+          rate_plans: selectedPlans.map((rp) => ({
+            name: rp.name,
+            period: rp.period,
+            product_rate_plan_id: rp.product_rate_plan_id,
+          })),
+        });
+      } else {
+        for (const rp of selectedPlans) {
+          const name = rp.name ? `${it.label} — ${rp.name}` : it.label;
+          importedAddons.push({
+            name,
+            product_rate_plan_id: rp.product_rate_plan_id,
+          });
+        }
+      }
+    });
+
+    // Renumber base tiers to 1..N with no gaps, preserving the user's order.
+    importedProducts.sort((a, b) => a.tier - b.tier);
+    importedProducts.forEach((p, idx) => (p.tier = idx + 1));
+
     const merged = mergeCatalog(currentConfig, importedProducts, importedAddons);
     onImport(merged);
     onOpenChange(false);
@@ -216,9 +231,10 @@ export function CatalogImportModal({
         <DialogHeader>
           <DialogTitle>Import catalog from Zuora</DialogTitle>
           <DialogDescription>
-            Select the products and add-ons to pull in. Existing entries with
-            matching rate plan IDs will be updated; new ones will be appended;
-            unselected items will be left alone.
+            Pick the rate plans to pull in and set each product as a Base tier
+            or an Add-on. The default split comes from each product's Zuora
+            category — override it with the toggle. Matching rate plan IDs are
+            updated; new ones appended; unselected items left alone.
           </DialogDescription>
         </DialogHeader>
 
@@ -241,7 +257,7 @@ export function CatalogImportModal({
                 <Search className="absolute left-2 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
                 <Input
                   className="pl-8"
-                  placeholder="Search products or rate plans…"
+                  placeholder="Search products, categories, SKUs, rate plans…"
                   value={filter}
                   onChange={(e) => setFilter(e.target.value)}
                 />
@@ -263,53 +279,26 @@ export function CatalogImportModal({
                 </div>
               )}
 
-              {filteredProducts.length > 0 && (
+              {filteredItems.length > 0 ? (
                 <div className="divide-y">
-                  <div className="bg-muted/40 px-3 py-1.5 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                    Products
-                  </div>
-                  {filteredProducts.map(({ p, i }) => (
-                    <ProductRow
+                  {filteredItems.map(({ it, i }) => (
+                    <ItemRow
                       key={i}
-                      prodIdx={i}
-                      product={p}
+                      itemIdx={i}
+                      item={it}
+                      role={itemState[i]?.role ?? it.suggested_role}
+                      tier={itemState[i]?.tier ?? it.tier ?? 1}
                       expanded={expanded.has(i)}
+                      selection={selectedRP}
                       onToggleExpand={() => toggleExpand(i)}
-                      selection={selection.rate_plans}
-                      onToggleProduct={() => toggleProduct(i, p.rate_plans.length)}
+                      onToggleItem={() => toggleItem(i, it.rate_plans.length)}
                       onToggleRatePlan={(rpi) => toggleRatePlan(i, rpi)}
+                      onSetRole={(r) => setRole(i, r)}
+                      onSetTier={(t) => setTier(i, t)}
                     />
                   ))}
                 </div>
-              )}
-
-              {filteredAddons.length > 0 && (
-                <div className="divide-y">
-                  <div className="bg-muted/40 px-3 py-1.5 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                    Add-ons
-                  </div>
-                  {filteredAddons.map(({ a, i }) => (
-                    <div
-                      key={i}
-                      className="flex cursor-pointer items-center gap-3 px-3 py-2 hover:bg-accent/40"
-                      onClick={() => toggleAddon(i)}
-                    >
-                      <Checkbox
-                        checked={selection.addons.has(i)}
-                        onCheckedChange={() => toggleAddon(i)}
-                      />
-                      <div className="flex-1">
-                        <p className="text-sm">{a.name}</p>
-                        <p className="font-mono text-[0.65rem] text-muted-foreground">
-                          {a.product_rate_plan_id}
-                        </p>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-
-              {filteredProducts.length === 0 && filteredAddons.length === 0 && (
+              ) : (
                 <p className="p-4 text-center text-sm text-muted-foreground">
                   Nothing matches "{filter}".
                 </p>
@@ -322,19 +311,17 @@ export function CatalogImportModal({
           <div className="mr-auto text-xs text-muted-foreground">
             {preview && (
               <>
-                {counts.products} product{counts.products !== 1 ? "s" : ""} ·{" "}
-                {counts.ratePlans} rate plan{counts.ratePlans !== 1 ? "s" : ""} ·{" "}
-                {counts.addons} add-on{counts.addons !== 1 ? "s" : ""} selected
+                {counts.base} base product{counts.base !== 1 ? "s" : ""} ·{" "}
+                {counts.addon} add-on{counts.addon !== 1 ? "s" : ""} ·{" "}
+                {counts.ratePlans} rate plan{counts.ratePlans !== 1 ? "s" : ""}{" "}
+                selected
               </>
             )}
           </div>
           <Button variant="outline" onClick={() => onOpenChange(false)}>
             Cancel
           </Button>
-          <Button
-            onClick={doImport}
-            disabled={!preview || (counts.ratePlans === 0 && counts.addons === 0)}
-          >
+          <Button onClick={doImport} disabled={!preview || counts.ratePlans === 0}>
             Import selected
           </Button>
         </DialogFooter>
@@ -343,31 +330,77 @@ export function CatalogImportModal({
   );
 }
 
-function ProductRow({
-  prodIdx,
-  product,
-  expanded,
-  onToggleExpand,
-  selection,
-  onToggleProduct,
-  onToggleRatePlan,
+function RoleToggle({
+  role,
+  onSetRole,
 }: {
-  prodIdx: number;
-  product: ImportedProduct;
-  expanded: boolean;
-  onToggleExpand: () => void;
-  selection: Set<string>;
-  onToggleProduct: () => void;
-  onToggleRatePlan: (rpi: number) => void;
+  role: ImportRole;
+  onSetRole: (r: ImportRole) => void;
 }) {
-  const selectedCount = product.rate_plans.filter((_, rpi) =>
-    selection.has(`${prodIdx}:${rpi}`)
+  return (
+    <div
+      className="flex overflow-hidden rounded-md border text-xs"
+      onClick={(e) => e.stopPropagation()}
+    >
+      {(["base", "addon"] as const).map((r) => (
+        <button
+          key={r}
+          type="button"
+          onClick={() => onSetRole(r)}
+          className={cn(
+            "px-2 py-1 font-medium transition-colors",
+            role === r
+              ? "bg-primary text-primary-foreground"
+              : "bg-transparent text-muted-foreground hover:bg-accent/40"
+          )}
+        >
+          {r === "base" ? "Base" : "Add-on"}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function ItemRow({
+  itemIdx,
+  item,
+  role,
+  tier,
+  expanded,
+  selection,
+  onToggleExpand,
+  onToggleItem,
+  onToggleRatePlan,
+  onSetRole,
+  onSetTier,
+}: {
+  itemIdx: number;
+  item: ImportedCatalogItem;
+  role: ImportRole;
+  tier: number;
+  expanded: boolean;
+  selection: Set<string>;
+  onToggleExpand: () => void;
+  onToggleItem: () => void;
+  onToggleRatePlan: (rpi: number) => void;
+  onSetRole: (r: ImportRole) => void;
+  onSetTier: (t: number) => void;
+}) {
+  const selectedCount = item.rate_plans.filter((_, rpi) =>
+    selection.has(`${itemIdx}:${rpi}`)
   ).length;
-  const allSelected = selectedCount === product.rate_plans.length;
+  const allSelected = selectedCount === item.rate_plans.length;
   const someSelected = selectedCount > 0 && !allSelected;
 
+  // Secondary metadata line — only render the bits that exist.
+  const meta = [
+    item.sku ? `SKU ${item.sku}` : null,
+    item.product_number || null,
+    item.description || null,
+  ].filter(Boolean) as string[];
+
   return (
-    <div className="">
+    <div>
       <div
         className="flex cursor-pointer items-center gap-3 px-3 py-2 hover:bg-accent/40"
         onClick={onToggleExpand}
@@ -380,30 +413,66 @@ function ProductRow({
             onToggleExpand();
           }}
         >
-          {expanded ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+          {expanded ? (
+            <ChevronDown className="h-4 w-4" />
+          ) : (
+            <ChevronRight className="h-4 w-4" />
+          )}
         </button>
         <Checkbox
           checked={allSelected ? true : someSelected ? "indeterminate" : false}
-          onCheckedChange={onToggleProduct}
+          onCheckedChange={onToggleItem}
           onClick={(e) => e.stopPropagation()}
         />
-        <div className="flex-1">
-          <p className="text-sm font-medium">{product.label}</p>
-          <p className="text-xs text-muted-foreground">
-            tier {product.tier} · {selectedCount}/{product.rate_plans.length} rate plans selected
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-2">
+            <p className="truncate text-sm font-medium">{item.label}</p>
+            <span
+              className={cn(
+                "shrink-0 rounded px-1.5 py-0.5 text-[0.6rem] font-semibold uppercase tracking-wide",
+                item.category
+                  ? "bg-muted text-muted-foreground"
+                  : "bg-amber-500/15 text-amber-400"
+              )}
+            >
+              {item.category ?? "no category"}
+            </span>
+          </div>
+          <p className="truncate text-xs text-muted-foreground">
+            {selectedCount}/{item.rate_plans.length} rate plan
+            {item.rate_plans.length !== 1 ? "s" : ""} selected
+            {meta.length > 0 && <> · {meta.join(" · ")}</>}
           </p>
+        </div>
+        <div className="flex shrink-0 items-center gap-2">
+          {role === "base" && (
+            <div
+              className="flex items-center gap-1"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <span className="text-[0.65rem] text-muted-foreground">tier</span>
+              <Input
+                type="number"
+                min={1}
+                value={tier}
+                onChange={(e) =>
+                  onSetTier(Math.max(1, Number(e.target.value) || 1))
+                }
+                className="h-7 w-14 px-1.5 text-center text-xs"
+              />
+            </div>
+          )}
+          <RoleToggle role={role} onSetRole={onSetRole} />
         </div>
       </div>
       {expanded && (
         <div className="ml-8 divide-y border-l">
-          {product.rate_plans.map((rp, rpi) => {
-            const key = `${prodIdx}:${rpi}`;
+          {item.rate_plans.map((rp, rpi) => {
+            const key = `${itemIdx}:${rpi}`;
             return (
               <div
                 key={rpi}
-                className={cn(
-                  "flex cursor-pointer items-center gap-3 px-3 py-1.5 text-sm hover:bg-accent/40"
-                )}
+                className="flex cursor-pointer items-center gap-3 px-3 py-1.5 text-sm hover:bg-accent/40"
                 onClick={() => onToggleRatePlan(rpi)}
               >
                 <Checkbox
@@ -416,7 +485,9 @@ function ProductRow({
                     {rp.period}
                   </span>
                 </div>
-                <code className="text-[0.65rem] text-muted-foreground">{rp.product_rate_plan_id}</code>
+                <code className="text-[0.65rem] text-muted-foreground">
+                  {rp.product_rate_plan_id}
+                </code>
               </div>
             );
           })}
