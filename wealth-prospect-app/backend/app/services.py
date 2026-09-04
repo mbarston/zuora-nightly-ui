@@ -54,6 +54,7 @@ def _backfill_identity(db: Session, p: Prospect) -> None:
             p.city = p.city or s.data.get("city")
             p.state = p.state or s.data.get("state")
             p.zip = p.zip or s.data.get("zip")
+    db.flush()
 
 
 def rescore(db: Session, p: Prospect, now: datetime | None = None) -> ScoreSnapshot:

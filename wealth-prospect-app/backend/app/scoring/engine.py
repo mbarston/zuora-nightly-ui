@@ -282,10 +282,12 @@ def estimate_wealth(signals: list[Sig], now: datetime | None = None) -> WealthEs
             ))
 
     # -- public equity ------------------------------------------------------
+    held_tickers: set[str] = set()
     for h in by_kind.get("equity.insider_holding", []):
         val = _num(h.data.get("value")) or _num(h.data.get("shares")) * _num(h.data.get("price"))
         if val > 0:
             est.public_equity += val
+            held_tickers.add(str(h.data.get("ticker") or "").upper())
             est.factors.append(Factor(
                 "public_equity", "Public company holdings", val,
                 f"{h.data.get('company')} ({h.data.get('ticker')}) — {h.data.get('role', 'insider')}",
@@ -293,6 +295,10 @@ def estimate_wealth(signals: list[Sig], now: datetime | None = None) -> WealthEs
             ))
     for l in by_kind.get("equity.ipo_lockup", []):
         val = _num(l.data.get("est_holding_value"))
+        # A lockup describes *when* a holding becomes liquid; if we already
+        # counted the holding itself from a Form 3/4, don't count it twice.
+        if str(l.data.get("ticker") or "").upper() in held_tickers:
+            continue
         if val > 0:
             est.public_equity += val
             est.factors.append(Factor(
@@ -382,11 +388,14 @@ def detect_triggers(signals: list[Sig], now: datetime | None = None) -> list[dic
     now = now or datetime.utcnow()
     out: list[dict] = []
 
-    def add(key: str, label: str, s: Sig, when: datetime | None, urgency: str = "warm") -> None:
+    def add(key: str, label: str, s: Sig, when: datetime | None, urgency: str = "warm", short: str | None = None) -> None:
         out.append({
-            "key": key, "label": label, "signal_id": s.id, "urgency": urgency,
+            "key": key, "label": label, "short": short or label, "signal_id": s.id, "urgency": urgency,
             "date": (when or s.observed_at).isoformat()[:10],
         })
+
+    def _m(v: float) -> str:
+        return f"${v / 1e6:.1f}M" if v >= 1e6 else f"${v / 1e3:.0f}K"
 
     for s in signals:
         d = s.data
@@ -397,22 +406,25 @@ def detect_triggers(signals: list[Sig], now: datetime | None = None) -> list[dic
         elif s.kind == "property.owned" and _within(_dt(d.get("purchase_date")), now, 365):
             add("bought_home", "Recently purchased a home", s, _dt(d.get("purchase_date")), "warm")
         elif s.kind == "equity.insider_transaction" and d.get("type") == "sale" and _within(_dt(d.get("date")), now, 365):
-            add("insider_sale", f"Sold ${_num(d.get('value')):,.0f} of {d.get('ticker')}", s, _dt(d.get("date")), "hot")
+            add("insider_sale", f"Sold ${_num(d.get('value')):,.0f} of {d.get('ticker')}", s, _dt(d.get("date")), "hot",
+                short=f"Sold {_m(_num(d.get('value')))} {d.get('ticker')}")
         elif s.kind == "equity.ipo_lockup" and _upcoming(_dt(d.get("lockup_expiry")), now, 180):
-            add("lockup_expiry", f"{d.get('ticker')} lockup expires soon", s, _dt(d.get("lockup_expiry")), "hot")
+            add("lockup_expiry", f"{d.get('ticker')} lockup expires soon", s, _dt(d.get("lockup_expiry")), "hot",
+                short=f"{d.get('ticker')} lockup")
         elif s.kind == "business.exit" and _within(_dt(d.get("date")), now, 365):
-            add("business_exit", f"Exited {d.get('entity')}", s, _dt(d.get("date")), "hot")
+            add("business_exit", f"Exited {d.get('entity')}", s, _dt(d.get("date")), "hot", short="Business exit")
         elif s.kind == "business.ownership" and _within(_dt(d.get("formed_at")), now, 365):
-            add("new_business", f"Formed {d.get('entity')}", s, _dt(d.get("formed_at")), "warm")
+            add("new_business", f"Formed {d.get('entity')}", s, _dt(d.get("formed_at")), "warm", short="New business")
         elif s.kind == "employment.change" and _within(_dt(d.get("date")), now, 180):
             label = "New job" + (" — relocated" if d.get("relocated") else "")
-            add("job_change", label, s, _dt(d.get("date")), "hot" if d.get("relocated") else "warm")
+            add("job_change", label, s, _dt(d.get("date")), "hot" if d.get("relocated") else "warm",
+                short="Relocated" if d.get("relocated") else "New job")
         elif s.kind == "life_event" and _within(_dt(d.get("date")), now, 365):
             t = str(d.get("type", "event"))
             urgency = "hot" if t in {"inheritance", "probate", "divorce", "retirement"} else "warm"
             add(f"life_{t}", t.replace("_", " ").capitalize(), s, _dt(d.get("date")), urgency)
         elif s.kind == "donation.charitable" and _num(d.get("amount")) >= 25_000 and _within(s.observed_at, now, 365):
-            add("major_gift", f"Major gift to {d.get('org')}", s, None, "warm")
+            add("major_gift", f"Major gift to {d.get('org')}", s, None, "warm", short="Major gift")
     order = {"hot": 0, "warm": 1}
     out.sort(key=lambda t: (order.get(t["urgency"], 2), t["date"]), reverse=False)
     return out

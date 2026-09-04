@@ -137,3 +137,15 @@ def test_explanation_serialises():
     e = r.to_explanation()
     assert set(e) == {"wealth", "personas", "triggers"}
     assert e["personas"]["realtor"]["factors"][0]["label"] == "Base rate"
+
+
+def test_lockup_not_double_counted_with_holding():
+    s = [
+        sig("equity.insider_holding", {"company": "Nimbus", "ticker": "NMBD", "value": 5_000_000}),
+        sig("equity.ipo_lockup", {"company": "Nimbus", "ticker": "NMBD", "lockup_expiry": "2026-12-01", "est_holding_value": 5_000_000}),
+    ]
+    w = estimate_wealth([Sig.from_any(x) for x in s], now=NOW)
+    assert w.public_equity == 5_000_000
+    # but a lockup for a ticker we have no holding for is still counted
+    only_lockup = estimate_wealth([Sig.from_any(s[1])], now=NOW)
+    assert only_lockup.public_equity == 5_000_000

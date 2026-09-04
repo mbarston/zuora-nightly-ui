@@ -142,12 +142,13 @@ def generate(p: ProspectIdentity, now: datetime | None = None) -> dict[str, list
     title = p.title or title
     employer = p.employer
     business = None
+    tech_co = r.choice(TECH_COS)
     if arch == "business_owner":
         business = r.choice(PRIVATE_COS)
         industry = industry or r.choice(INDUSTRIES)
         employer = employer or business
     elif arch == "tech_exec":
-        employer = employer or r.choice(TECH_COS)[0]
+        employer = employer or tech_co[0]
     elif arch == "physician":
         employer = employer or r.choice(["Regional Medical Center", "University Hospital", "Summit Orthopedics"])
     elif arch == "attorney_partner":
@@ -262,7 +263,7 @@ def generate(p: ProspectIdentity, now: datetime | None = None) -> dict[str, list
 
     # ---- public equity ---------------------------------------------------
     if arch == "tech_exec":
-        co, ticker = r.choice(TECH_COS)
+        co, ticker = tech_co
         value = r.choice([600e3, 1.5e6, 3e6, 8e6, 20e6]) * r.uniform(0.7, 1.3)
         out["sec_edgar"].append(SignalDraft(
             kind="equity.insider_holding", source="sec_edgar", confidence=0.9,
